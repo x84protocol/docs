@@ -1,0 +1,197 @@
+---
+title: "Settlement"
+description: "High-level and low-level settlement with compressed receipts"
+---
+
+The settlement module handles x402 payment verification and execution, including Light Protocol compressed receipts for cost-efficient on-chain storage at scale.
+
+```typescript
+import {
+  settle,
+  buildVerifyAndSettleIx,
+  prepareLightSettlement,
+  createLightAlt,
+  getLightAltAccount,
+  deriveCompressedReceiptAddress,
+} from "@x84-ai/sdk/settlement";
+```
+
+## settle -- high-level
+
+The `settle` function handles the entire settlement flow end-to-end: builds the instruction, fetches the Light Protocol proof, creates a `VersionedTransaction` with the ALT, signs, sends, confirms, and parses events.
+
+```typescript
+import { settle, SettlementMode, ServiceType } from "@x84-ai/sdk/settlement";
+import { Rpc } from "@lightprotocol/stateless.js";
+
+const rpc = new Rpc(connection);
+
+const result = await settle({
+  program,
+  rpc,
+  connection,
+  nftMint: agentId,
+  serviceType: ServiceType.A2A,
+  amount: new BN(1_000_000),        // 1 USDC
+  resource: "/v1/chat",
+  mode: SettlementMode.Atomic,
+  payer: payerPubkey,
+  payerTokenAccount: payerAta,
+  payeeTokenAccount: agentOwnerAta,
+  treasuryTokenAccount: config.treasuryTokenAccount!,
+  tokenMint: config.tokenMint!,
+  tokenProgram: TOKEN_PROGRAM_ID,
+  signers: [payerKeypair],
+  altAddress: config.lightAlt!,
+});
+
+console.log("TX:", result.txSignature);
+console.log("Fee:", result.paymentSettled?.feeAmount);
+```
+
+The returned object includes the transaction signature and all parsed events from the settlement transaction (including `paymentSettled`).
+
+## buildVerifyAndSettleIx -- low-level
+
+When you need the raw instruction to combine with other instructions in a custom transaction, use the low-level builder.
+
+Returns `{ computeBudgetIx, instruction, lightParams }`.
+
+```typescript
+import { buildVerifyAndSettleIx } from "@x84-ai/sdk/settlement";
+
+const { computeBudgetIx, instruction, lightParams } = await buildVerifyAndSettleIx({
+  program,
+  rpc,
+  nftMint: agentId,
+  serviceType: ServiceType.A2A,
+  amount: new BN(1_000_000),
+  resource: "/v1/chat",
+  mode: SettlementMode.Atomic,
+  payer: payerPubkey,
+  payerTokenAccount: payerAta,
+  payeeTokenAccount: agentOwnerAta,
+  treasuryTokenAccount: config.treasuryTokenAccount!,
+  tokenMint: config.tokenMint!,
+  tokenProgram: TOKEN_PROGRAM_ID,
+});
+
+// Assemble into your own transaction
+const tx = new VersionedTransaction(
+  new TransactionMessage({
+    payerKey: payerPubkey,
+    recentBlockhash: blockhash,
+    instructions: [computeBudgetIx, instruction],
+  }).compileToV0Message([altAccount])
+);
+```
+
+## Settlement modes
+
+| Mode | Description | Requires | Use case |
+|------|-------------|----------|----------|
+| `Atomic` | On-chain token transfer via CPI | Payer signs the transaction | Direct payments where the payer is present |
+| `Attestation` | Off-chain payment, facilitator attests on-chain | Facilitator signer | Credit card, fiat, or cross-chain payments verified off-chain |
+| `Delegated` | Settlement via a delegation account with spending limits | Delegation PDA + facilitator | Autonomous agent spending within a budget |
+
+<Tabs>
+  <Tab title="Atomic">
+    The payer's tokens are transferred on-chain via CPI during the settlement transaction. The protocol fee is deducted and sent to the treasury automatically.
+
+    ```typescript
+    const result = await settle({
+      // ...common params
+      mode: SettlementMode.Atomic,
+      signers: [payerKeypair],
+    });
+    ```
+  </Tab>
+  <Tab title="Attestation">
+    Payment happens off-chain (credit card, fiat rail, cross-chain bridge). The facilitator verifies the payment occurred and attests on-chain by co-signing the settlement transaction.
+
+    ```typescript
+    const result = await settle({
+      // ...common params
+      mode: SettlementMode.Attestation,
+      signers: [facilitatorKeypair],
+    });
+    ```
+  </Tab>
+  <Tab title="Delegated">
+    A delegation account with spending limits authorizes the settlement. The delegation's `spentTotal` is incremented and checked against `maxSpendTotal` and `maxSpendPerTx`.
+
+    ```typescript
+    const result = await settle({
+      // ...common params
+      mode: SettlementMode.Delegated,
+      delegationPda: delegationPda,
+      signers: [facilitatorKeypair],
+    });
+    ```
+  </Tab>
+</Tabs>
+
+## Address lookup table
+
+Settlement transactions reference many accounts (Light Protocol CPI, token program, config PDA, etc.). An address lookup table (ALT) keeps `VersionedTransaction` size within Solana's 1232-byte limit.
+
+The ALT contains 16 static accounts:
+
+| Index | Account |
+|-------|---------|
+| 0-7 | Light Protocol CPI v1 system accounts |
+| 8-10 | Light Protocol tree accounts |
+| 11 | Config PDA |
+| 12 | Token Program (SPL) |
+| 13 | Token Mint |
+| 14 | Treasury Token Account |
+| 15 | Facilitator |
+
+<Note>
+The ALT is created once per network deployment and reused across all settlement transactions. Its address is stored in the `NetworkConfig` as `lightAlt`.
+</Note>
+
+## Light Protocol integration
+
+Settlement receipts are stored as compressed PDAs via Light Protocol, keeping per-receipt cost near zero while maintaining on-chain verifiability.
+
+### prepareLightSettlement
+
+Fetches the Light Protocol proof and state tree data needed for the settlement instruction.
+
+```typescript
+import { prepareLightSettlement } from "@x84-ai/sdk/settlement";
+
+const lightParams = await prepareLightSettlement(rpc, paymentId);
+```
+
+### deriveCompressedReceiptAddress
+
+Derive the address of a compressed receipt PDA for a given payment ID.
+
+```typescript
+import { deriveCompressedReceiptAddress } from "@x84-ai/sdk/settlement";
+
+const receiptAddress = deriveCompressedReceiptAddress(paymentId);
+```
+
+## Deploy CLI
+
+The SDK includes CLI commands for managing settlement infrastructure on each network.
+
+```bash
+# Create the settlement ALT (one-time per network)
+pnpm x84 -n devnet -a create-alt
+
+# Initialize protocol config and collection
+pnpm x84 -n devnet -a initialize
+
+# Update on-chain config (e.g., change fee, set facilitator)
+pnpm x84 -n devnet -a update-config
+
+# Deploy or upgrade the program
+pnpm x84 -n devnet -a deploy-program
+
+# Generate a named keypair
+pnpm x84 -n devnet -a generate-keypair
+```

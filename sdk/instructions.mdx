@@ -1,0 +1,372 @@
+---
+title: "Instructions"
+description: "All instruction builders for the x84 program"
+---
+
+Every instruction builder in the SDK is an async function that takes a `program: X84Program` as its first argument and returns an object containing the built `TransactionInstruction` along with any derived PDAs.
+
+```typescript
+const { instruction, ...derivedPDAs } = await someInstruction(program, args);
+```
+
+You are responsible for assembling the instruction into a transaction, adding signers, and sending it. This gives you full control over transaction composition, compute budgets, and signing flows.
+
+## Admin
+
+### initialize
+
+Creates the ProtocolConfig PDA and Metaplex Core Collection NFT. This is a one-time setup instruction.
+
+```typescript
+const { instruction, collection, configPda } = await initialize(program, {
+  authority: adminKeypair.publicKey,
+  registrationFee: new BN(50_000_000),
+  settlementFeeBps: 300,
+  feeTreasury: treasuryPubkey,
+});
+// Signers: [adminKeypair, collection]
+```
+
+### updateConfig
+
+Update protocol parameters. Only non-null fields are modified.
+
+```typescript
+const { instruction } = await updateConfig(program, {
+  authority: adminKeypair.publicKey,
+  newFee: new BN(100_000_000),        // optional
+  newSettlementFeeBps: 500,            // optional
+  newTreasury: newTreasuryPubkey,      // optional
+  newFacilitator: facPubkey,           // optional
+  pausePayments: true,                // optional
+});
+// Signers: [adminKeypair]
+```
+
+## Identity
+
+### registerAgent
+
+Register a new agent. Mints a Metaplex Core NFT -- the mint pubkey becomes the `agent_id`.
+
+```typescript
+const { instruction, asset, agentPda } = await registerAgent(program, {
+  owner: ownerPubkey,
+  configAuthority: configAuthorityPubkey,
+  metadataUri: "https://example.com/agent.json",
+  metadataHash: hashBytes(metadataBuffer), // 32-byte SHA-256
+  feedbackAuthority: feedbackKeyPubkey,
+  tags: ["ai-agent", "code-review"],       // auto-hashed, max 5
+  collection: collectionPubkey,
+  feeTreasury: treasuryPubkey,
+});
+// Signers: [ownerKeypair, asset, configAuthorityKeypair]
+// agent_id = asset.publicKey
+```
+
+### updateAgentMetadata
+
+Update the metadata URI and hash for an agent. Supports delegation -- pass a `delegationPda` if the caller is a delegate.
+
+```typescript
+await updateAgentMetadata(program, {
+  caller: ownerPubkey,
+  nftMint: agentId,
+  newUri: "https://example.com/agent-v2.json",
+  newHash: hashBytes(newMetadataBuffer),
+  delegation: null,  // or delegationPda if caller is delegate
+});
+```
+
+### deactivateAgent
+
+Deactivate an agent. The agent will be marked inactive and most operations will fail with `AgentInactive`.
+
+```typescript
+await deactivateAgent(program, ownerPubkey, nftMint);
+// Signers: [ownerKeypair]
+```
+
+### reactivateAgent
+
+Reactivate a previously deactivated agent.
+
+```typescript
+await reactivateAgent(program, ownerPubkey, nftMint);
+// Signers: [ownerKeypair]
+```
+
+### claimAgent
+
+Called by the new NFT holder after transfer. Increments `owner_version`, which invalidates all existing delegations.
+
+```typescript
+await claimAgent(program, newOwnerPubkey, nftMint);
+// Signers: [newOwnerKeypair] (must hold the NFT)
+```
+
+### setFeedbackAuthority
+
+Change the feedback authority keypair for an agent.
+
+```typescript
+await setFeedbackAuthority(program, ownerPubkey, nftMint, newAuthorityPubkey);
+// Signers: [ownerKeypair]
+```
+
+## Service
+
+### addService
+
+Register a service endpoint for an agent. Each agent can have one service per `ServiceType`.
+
+```typescript
+const { instruction, servicePda } = await addService(program, {
+  caller: ownerPubkey,
+  nftMint: agentId,
+  serviceType: ServiceType.A2A,
+  endpoint: "https://agent.example.com/a2a",
+  version: "1.0.0",
+});
+// Signers: [ownerKeypair]
+```
+
+### updateService
+
+Update the endpoint or version for an existing service.
+
+```typescript
+await updateService(program, {
+  caller: ownerPubkey,
+  nftMint: agentId,
+  serviceType: ServiceType.A2A,
+  newEndpoint: "https://v2.agent.example.com/a2a",
+  newVersion: "2.0.0",
+});
+// Signers: [ownerKeypair]
+```
+
+### removeService
+
+Close the service PDA. Rent is refunded to the caller.
+
+```typescript
+await removeService(program, {
+  caller: ownerPubkey,
+  nftMint: agentId,
+  serviceType: ServiceType.A2A,
+});
+// Signers: [ownerKeypair]
+```
+
+## Reputation
+
+### giveFeedback
+
+Submit feedback for an agent. Requires an Ed25519 signature from the agent's feedback authority to prevent spam.
+
+<Warning>
+The transaction must include **both** the Ed25519 verification instruction and the feedback instruction, in that order. The program verifies the Ed25519 instruction exists at index 0 in the transaction.
+</Warning>
+
+```typescript
+const { ed25519Instruction, instruction, feedbackPda } = await giveFeedback(
+  program,
+  {
+    reviewer: reviewerPubkey,
+    nftMint: agentId,
+    score: 85,                          // 0-100
+    tag1: hashTag("reliability"),        // 32-byte hash
+    tag2: hashTag("speed"),
+    detailUri: "https://example.com/feedback.json",
+    detailHash: hashBytes(feedbackBuffer),
+    feedbackAuth: signatureBytes,        // Ed25519 sig (64 bytes)
+    hasPaymentProof: true,
+    paymentAmount: new BN(1_000_000),
+    paymentToken: usdcMint,
+    feedbackNonce: new BN(0),
+  },
+  feedbackAuthoritySecretKey  // optional: auto-builds Ed25519 ix
+);
+
+// Transaction must include BOTH instructions in order:
+// [ed25519Instruction, instruction]
+```
+
+If you pass the `feedbackAuthoritySecretKey` (the secret key bytes), the SDK will automatically construct the Ed25519 verification instruction. Otherwise, you must provide the pre-computed signature in `feedbackAuth` and build the Ed25519 instruction yourself.
+
+### revokeFeedback
+
+Revoke a previously submitted feedback entry. Only the original reviewer can revoke.
+
+```typescript
+await revokeFeedback(program, {
+  reviewer: reviewerPubkey,
+  nftMint: agentId,
+  feedbackPda: feedbackPda,
+});
+// Signers: [reviewerKeypair]
+```
+
+## Validation
+
+Validation is a 2-step process: the agent owner requests validation from a specific validator, then the validator submits their assessment.
+
+### validationRequest
+
+Request a validator to assess the agent.
+
+```typescript
+const { instruction, validationRequestPda } = await validationRequest(program, {
+  caller: ownerPubkey,
+  nftMint: agentId,
+  validator: validatorPubkey,
+  requestHash: hashBytes(requestData),
+  tag: hashTag("security-audit"),
+  requestUri: "https://example.com/validation-request.json",
+});
+// Signers: [ownerKeypair]
+```
+
+### validationResponse
+
+Validator submits their assessment. The `requestHash` must match the original request.
+
+```typescript
+const { instruction, validationResponsePda } = await validationResponse(program, {
+  validator: validatorPubkey,
+  nftMint: agentId,
+  requestHash: requestHash,  // must match the request
+  score: 92,
+  tag: hashTag("security-audit"),
+  evidenceUri: "https://example.com/evidence.json",
+  evidenceHash: hashBytes(evidenceBuffer),
+});
+// Signers: [validatorKeypair]
+```
+
+## Delegation
+
+### DelegationBuilder
+
+The `DelegationBuilder` provides a fluent API for constructing delegations with granular permissions and constraints.
+
+```typescript
+import { DelegationBuilder } from "@x84-ai/sdk";
+
+const { instruction, delegationPda, delegationId } = await new DelegationBuilder()
+  .transact()
+  .feedback()
+  .metadata()
+  .spendLimit(new BN(1_000_000), new BN(10_000_000))
+  .tokens([usdcMint])
+  .expiry(Math.floor(Date.now() / 1000) + 86400)  // 24h
+  .uses(100)
+  .build(program, delegatorPubkey, delegatePubkey, nftMint);
+// Signers: [delegatorKeypair]
+```
+
+**Permission methods**
+
+| Method | Grants |
+|--------|--------|
+| `.transact()` | `canTransact` -- settle payments on behalf of agent |
+| `.feedback()` | `canGiveFeedback` -- submit feedback for the agent |
+| `.metadata()` | `canUpdateMetadata` -- update agent metadata URI and hash |
+| `.pricing()` | `canUpdatePricing` -- modify payment requirements |
+| `.services()` | `canRegisterServices` -- add, update, or remove services |
+| `.manage()` | `canManage` -- deactivate/reactivate the agent |
+| `.redelegate()` | `canRedelegate` -- create sub-delegations (max depth 2) |
+| `.allPermissions()` | All of the above |
+
+**Constraint methods**
+
+| Method | Effect |
+|--------|--------|
+| `.spendLimit(perTx, total)` | Maximum spend per transaction and total |
+| `.tokens(mints[])` | Restrict to specific token mints (max 5) |
+| `.programs(ids[])` | Restrict to specific program IDs (max 5) |
+| `.expiry(unix)` | Unix timestamp expiration |
+| `.uses(count)` | Maximum number of uses |
+| `.parent(delegationPda)` | Parent delegation for sub-delegation |
+
+### createDelegation
+
+Direct delegation creation without the builder, for cases where you want to specify all fields explicitly.
+
+```typescript
+await createDelegation(program, {
+  delegator: delegatorPubkey,
+  delegate: delegatePubkey,
+  nftMint: agentId,
+  permissions: {
+    canTransact: true,
+    canGiveFeedback: false,
+    canUpdateMetadata: false,
+    canUpdatePricing: false,
+    canRegisterServices: false,
+    canManage: false,
+    canRedelegate: false,
+  },
+  constraints: {
+    maxSpendPerTx: new BN(0),
+    maxSpendTotal: new BN(0),
+    allowedTokens: [],
+    allowedPrograms: [],
+    expiresAt: new BN(0),
+    usesRemaining: new BN(0),
+  },
+});
+// Signers: [delegatorKeypair]
+```
+
+### revokeDelegation
+
+Revoke a delegation. Can be called by the delegator or the agent owner.
+
+```typescript
+await revokeDelegation(program, {
+  caller: delegatorPubkey,  // delegator or agent owner
+  nftMint: agentId,
+  delegationPda: delegationPda,
+});
+// Signers: [callerKeypair]
+```
+
+## Payment
+
+### setPaymentRequirement
+
+Set an x402 payment gate for a service. Each service type can have one payment requirement.
+
+```typescript
+const { instruction, paymentReqPda } = await setPaymentRequirement(program, {
+  caller: ownerPubkey,
+  nftMint: agentId,
+  serviceType: ServiceType.A2A,
+  scheme: PaymentScheme.Exact,
+  amount: new BN(1_000_000),  // 1 USDC (6 decimals)
+  tokenMint: usdcMint,
+  payTo: ownerPubkey,
+  description: "LLM inference per request",
+  resource: "/v1/chat",
+});
+// Signers: [ownerKeypair]
+```
+
+### updatePaymentRequirement
+
+Update amount, payTo, description, or active status. Null fields are left unchanged.
+
+```typescript
+await updatePaymentRequirement(program, {
+  caller: ownerPubkey,
+  nftMint: agentId,
+  serviceType: ServiceType.A2A,
+  newAmount: new BN(2_000_000),   // optional
+  newPayTo: newPayeePubkey,       // optional
+  newDescription: "Updated rate", // optional
+  active: true,                   // optional
+});
+// Signers: [ownerKeypair]
+```

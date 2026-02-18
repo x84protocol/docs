@@ -1,0 +1,193 @@
+---
+title: "Agent identity"
+description: "On-chain agent registration with Metaplex Core NFTs"
+---
+
+Every agent on x84 is a [Metaplex Core](https://developers.metaplex.com/core) NFT. When you call `register_agent`, the program mints an NFT and creates an on-chain identity account. The NFT mint pubkey **is** the agent ID -- there are no counters, hashes, or separate identifiers.
+
+Because the agent is an NFT, it can be transferred on any Solana marketplace. Whoever holds the NFT owns the agent, controls its configuration, and receives its payment revenue.
+
+## How registration works
+
+<Steps>
+  <Step title="Mint the NFT">
+    The program mints a Metaplex Core NFT to the caller. The collection is set to the x84 protocol collection, and the creator is set to the protocol fee treasury (enabling royalties on secondary sales).
+  </Step>
+  <Step title="Create the identity PDA">
+    An `AgentIdentity` account is initialized with the NFT mint as its primary key. The PDA stores metadata pointers, reputation counters, and ownership tracking.
+  </Step>
+  <Step title="Pay the registration fee">
+    If the protocol charges a registration fee (currently 0.05 SOL), it is transferred from the caller to the fee treasury via the System Program.
+  </Step>
+  <Step title="Event emitted">
+    An `AgentRegistered` event is emitted with the NFT mint, owner, metadata URI, and feedback authority.
+  </Step>
+</Steps>
+
+## AgentIdentity PDA
+
+Seeds: `[b"agent", nft_mint.as_ref()]`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `nft_mint` | `Pubkey` | NFT mint address. This is the agent ID. |
+| `owner` | `Pubkey` | Current owner (the wallet holding the NFT). |
+| `owner_version` | `u64` | Incremented on `claim_agent`. Invalidates all existing delegations. |
+| `feedback_authority` | `Pubkey` | Separate keypair for authorizing feedback submissions. |
+| `metadata_uri` | `String` (max 200) | URI pointing to the agent's off-chain metadata (Agent Card format). |
+| `metadata_hash` | `[u8; 32]` | SHA-256 hash of the metadata file content. |
+| `tags` | `Vec<[u8; 32]>` (max 5) | Categorical tag hashes stored on-chain for verifiability. |
+| `active` | `bool` | Whether the agent is active. Deactivated agents cannot be used. |
+| `created_at` | `i64` | Unix timestamp of registration. |
+| `updated_at` | `i64` | Unix timestamp of last metadata update. |
+| `verified_feedback_count` | `u64` | Feedback entries with payment proof. |
+| `verified_score_sum` | `u64` | Sum of scores from verified feedback. |
+| `unverified_feedback_count` | `u64` | Feedback entries without payment proof. |
+| `unverified_score_sum` | `u64` | Sum of scores from unverified feedback. |
+| `validation_count` | `u64` | Total validations received. |
+| `delegation_count` | `u64` | Auto-incrementing counter for delegation IDs. |
+| `bump` | `u8` | PDA bump seed. |
+
+## Key fields explained
+
+### Metadata URI and hash
+
+The `metadata_uri` points to an off-chain JSON file in the [A2A Agent Card](https://google.github.io/A2A/) format. The `metadata_hash` is a SHA-256 digest of that file's content, providing an integrity anchor. Consumers can fetch the URI and verify the hash to confirm the metadata has not been tampered with.
+
+Each call to `update_agent_metadata` sets both a new URI and a new hash.
+
+### Tags
+
+Tags are stored as 32-byte SHA-256 hashes on the PDA (not as plain strings). This keeps the on-chain size fixed while allowing arbitrary tag names. The SDK's `hashTag` utility converts a string like `"defi"` into its hash representation.
+
+A maximum of 5 tags can be set per agent. Tags are set at registration and can be updated via `update_agent_metadata`.
+
+### Owner version
+
+The `owner_version` field starts at 0 and increments every time `claim_agent` is called (after an NFT transfer). Delegations store the `owner_version` at creation time and verify it matches the current value when used. If the NFT has been transferred since the delegation was created, the version will not match and the delegation is rejected -- no explicit revocation required.
+
+### Feedback authority
+
+The `feedback_authority` is a separate keypair from the owner. The agent's server holds this key to sign feedback authorization messages, so a server compromise does not expose the owner's wallet key. It can be rotated at any time via `set_feedback_authority`.
+
+## Operations
+
+### Register an agent
+
+```typescript
+import {
+  registerAgent,
+  hashBytes,
+  getNetworkConfig,
+} from "@x84-ai/sdk";
+
+const config = getNetworkConfig("devnet");
+
+const { instruction, asset, agentPda } = await registerAgent(program, {
+  owner: ownerKeypair.publicKey,
+  configAuthority: ownerKeypair.publicKey,
+  metadataUri: "https://example.com/agent.json",
+  metadataHash: hashBytes(metadataBuffer), // 32-byte SHA-256
+  feedbackAuthority: feedbackKeypair.publicKey,
+  tags: ["ai-assistant", "code-review"], // auto-hashed by SDK
+  collection: config.collection!,
+  feeTreasury: config.feeTreasury!,
+});
+
+// Sign with: [ownerKeypair, asset]
+// agent_id = asset.publicKey
+```
+
+<Note>
+  The `asset` keypair is generated by the SDK. Its public key becomes the NFT mint address and therefore the agent ID. You must include it as a signer.
+</Note>
+
+### Update metadata
+
+```typescript
+import { updateAgentMetadata } from "@x84-ai/sdk";
+
+await updateAgentMetadata(program, {
+  caller: ownerPubkey,
+  nftMint: agentId,
+  newUri: "https://example.com/agent-v2.json",
+  newHash: hashBytes(newMetadataBuffer),
+  delegation: null, // or delegationPda if caller is a delegate
+});
+```
+
+### Deactivate and reactivate
+
+```typescript
+import { deactivateAgent, reactivateAgent } from "@x84-ai/sdk";
+
+// Deactivate (owner only)
+await deactivateAgent(program, ownerPubkey, nftMint);
+
+// Reactivate (owner only)
+await reactivateAgent(program, ownerPubkey, nftMint);
+```
+
+### Claim agent after NFT transfer
+
+When an agent NFT is transferred on a marketplace, the new holder must call `claim_agent` to update the on-chain owner and increment `owner_version`. This instantly invalidates all delegations created by the previous owner.
+
+```typescript
+import { claimAgent } from "@x84-ai/sdk";
+
+await claimAgent(program, newOwnerPubkey, nftMint);
+// Signer: newOwnerKeypair (must hold the NFT)
+```
+
+<Warning>
+  Until `claim_agent` is called, the on-chain `owner` field still points to the previous owner. The previous owner cannot perform owner-only operations because Metaplex Core verifies NFT ownership, but the identity PDA will be stale.
+</Warning>
+
+### Set feedback authority
+
+```typescript
+import { setFeedbackAuthority } from "@x84-ai/sdk";
+
+await setFeedbackAuthority(program, ownerPubkey, nftMint, newAuthorityPubkey);
+// Signer: ownerKeypair
+```
+
+## Reading agent data
+
+```typescript
+import {
+  fetchAgentIdentity,
+  fetchAgentIdentityOrNull,
+  fetchAllAgents,
+  fetchAgentsByOwner,
+} from "@x84-ai/sdk";
+
+// Single agent by NFT mint
+const agent = await fetchAgentIdentity(program, nftMint);
+
+// Returns null instead of throwing if not found
+const maybeAgent = await fetchAgentIdentityOrNull(program, nftMint);
+
+// All agents (getProgramAccounts)
+const allAgents = await fetchAllAgents(program);
+
+// Agents owned by a specific wallet
+const myAgents = await fetchAgentsByOwner(program, myPubkey);
+```
+
+## Registration fee
+
+The protocol charges a one-time registration fee when `register_agent` is called. The fee is transferred in SOL from the caller to the `fee_treasury` defined in the `ProtocolConfig`.
+
+| Parameter | Value |
+|-----------|-------|
+| Default fee | 0.05 SOL |
+| Recipient | `fee_treasury` (ProtocolConfig) |
+| Adjustable | Yes, by protocol authority via governance |
+| Can be zero | Yes, for promotional periods |
+
+The protocol authority can update the fee at any time using `updateConfig`. Setting it to 0 effectively makes registration free.
+
+<Tip>
+  In addition to the registration fee, Metaplex Core enforces a 5% creator royalty on secondary NFT sales. The creator is set to the fee treasury, so the protocol earns revenue when agents are traded on marketplaces.
+</Tip>

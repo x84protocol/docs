@@ -1,0 +1,270 @@
+---
+title: "Types and enums"
+description: "TypeScript types matching the x84 on-chain state"
+---
+
+All types are exported from `@x84-ai/sdk` and match the on-chain Anchor IDL exactly.
+
+```typescript
+import {
+  ServiceType,
+  PaymentScheme,
+  SettlementMode,
+  DelegationPermissions,
+  DelegationConstraints,
+  X84Program,
+} from "@x84-ai/sdk";
+```
+
+## Enums
+
+### ServiceType
+
+Identifies the kind of service an agent exposes. Used as a PDA seed for service and payment requirement accounts.
+
+```typescript
+ServiceType.MCP   // "mcp" — Model Context Protocol
+ServiceType.A2A   // "a2a" — Agent-to-Agent
+ServiceType.API   // "api" — REST API
+ServiceType.Web   // "web" — Web interface
+```
+
+### PaymentScheme
+
+Controls how payment amounts are validated during settlement.
+
+| Variant | Description |
+|---------|-------------|
+| `PaymentScheme.Exact` | Payment must match the required amount exactly |
+| `PaymentScheme.UpTo` | Payment can be any amount up to the required maximum |
+
+### SettlementMode
+
+Determines how payment is verified and executed.
+
+| Variant | Description | Requires |
+|---------|-------------|----------|
+| `SettlementMode.Atomic` | On-chain token transfer via CPI | Payer signs the transaction |
+| `SettlementMode.Attestation` | Off-chain payment, facilitator attests on-chain | Facilitator signer |
+| `SettlementMode.Delegated` | Settlement via a delegation account with spending limits | Delegation PDA + facilitator |
+
+## Interfaces
+
+### DelegationPermissions
+
+Seven boolean flags controlling what a delegate can do on behalf of an agent.
+
+```typescript
+interface DelegationPermissions {
+  canTransact: boolean;
+  canGiveFeedback: boolean;
+  canUpdateMetadata: boolean;
+  canUpdatePricing: boolean;
+  canRegisterServices: boolean;
+  canManage: boolean;
+  canRedelegate: boolean;
+}
+```
+
+| Field | Permission granted |
+|-------|-------------------|
+| `canTransact` | Settle payments on behalf of the agent |
+| `canGiveFeedback` | Submit feedback entries for the agent |
+| `canUpdateMetadata` | Update agent metadata URI and hash |
+| `canUpdatePricing` | Modify payment requirements |
+| `canRegisterServices` | Add, update, or remove service endpoints |
+| `canManage` | Deactivate or reactivate the agent |
+| `canRedelegate` | Create sub-delegations (max depth 2) |
+
+### DelegationConstraints
+
+Spending and usage limits for a delegation.
+
+```typescript
+interface DelegationConstraints {
+  maxSpendPerTx: BN;        // 0 = unlimited
+  maxSpendTotal: BN;        // 0 = unlimited
+  allowedTokens: PublicKey[]; // empty = all, max 5
+  allowedPrograms: PublicKey[]; // empty = all, max 5
+  expiresAt: BN;            // unix seconds, 0 = no expiry
+  usesRemaining: BN;        // 0 = unlimited
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `maxSpendPerTx` | Maximum token amount per transaction. `0` means unlimited. |
+| `maxSpendTotal` | Lifetime spending cap. `0` means unlimited. |
+| `allowedTokens` | Whitelist of token mints. Empty array allows all tokens. Maximum 5. |
+| `allowedPrograms` | Whitelist of program IDs. Empty array allows all programs. Maximum 5. |
+| `expiresAt` | Unix timestamp after which the delegation is invalid. `0` means no expiry. |
+| `usesRemaining` | Number of uses before the delegation is exhausted. `0` means unlimited. |
+
+## On-chain account structures
+
+### ProtocolConfig
+
+Singleton account holding global protocol parameters. Derived from the `"config"` seed.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `authority` | `Pubkey` | Admin/upgrade authority |
+| `collection` | `Pubkey` | Metaplex Core collection |
+| `registrationFee` | `u64` | Fee in lamports (default 0.05 SOL) |
+| `settlementFeeBps` | `u16` | Basis points (default 300 = 3%) |
+| `feeTreasury` | `Pubkey` | Fee recipient |
+| `facilitator` | `Pubkey` | Attestation-mode signer |
+| `pause_*` | `bool` | Per-module pause flags |
+
+### AgentIdentity
+
+One account per agent, derived from `["agent", nftMint]`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `nftMint` | `Pubkey` | Agent ID = NFT mint pubkey |
+| `owner` | `Pubkey` | Current owner (follows NFT) |
+| `ownerVersion` | `u64` | Incremented on transfer, invalidates delegations |
+| `active` | `bool` | Agent active status |
+| `metadataUri` | `String` | Off-chain metadata pointer |
+| `metadataHash` | `[u8; 32]` | SHA-256 of metadata |
+| `feedbackAuthority` | `Pubkey` | Separate key for feedback authorization |
+| `delegationCount` | `u64` | Counter for delegation ID derivation |
+| `feedbackScore` | `u8` | Aggregated score 0-100 |
+| `feedbackCount` | `u64` | Total feedback entries |
+
+### AgentService
+
+One account per agent per service type, derived from `["service", nftMint, serviceTypeSeed]`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `nftMint` | `Pubkey` | Agent this service belongs to |
+| `serviceType` | `ServiceType` | MCP, A2A, API, or Web |
+| `endpoint` | `String` | Service URL |
+| `version` | `String` | Semantic version |
+
+### FeedbackEntry
+
+One account per feedback submission, derived from `["feedback", nftMint, reviewer, nonce]`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `nftMint` | `Pubkey` | Agent being reviewed |
+| `reviewer` | `Pubkey` | Feedback submitter |
+| `score` | `u8` | Score 0-100 |
+| `tag1` | `[u8; 32]` | Category tag hash |
+| `tag2` | `[u8; 32]` | Category tag hash |
+| `detailUri` | `String` | Off-chain feedback detail |
+| `detailHash` | `[u8; 32]` | SHA-256 of detail |
+| `hasPaymentProof` | `bool` | Whether feedback has payment proof |
+| `paymentAmount` | `u64` | Amount paid (for weighting) |
+| `paymentToken` | `Pubkey` | Token used for payment |
+
+### ValidationRequest
+
+Derived from `["val_request", nftMint, validator, hash[0..8]]`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `nftMint` | `Pubkey` | Agent to validate |
+| `validator` | `Pubkey` | Requested validator |
+| `requestHash` | `[u8; 32]` | Hash of request details |
+| `tag` | `[u8; 32]` | Validation category |
+| `requestUri` | `String` | Off-chain request details |
+
+### ValidationResponse
+
+Derived from `["val_response", nftMint, validator, hash[0..8]]`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `nftMint` | `Pubkey` | Agent validated |
+| `validator` | `Pubkey` | Validator who responded |
+| `requestHash` | `[u8; 32]` | Matching request hash |
+| `score` | `u8` | Validation score 0-100 |
+| `tag` | `[u8; 32]` | Validation category |
+| `evidenceUri` | `String` | Off-chain evidence |
+| `evidenceHash` | `[u8; 32]` | SHA-256 of evidence |
+
+### Delegation
+
+Derived from `["delegation", delegator, delegate, id]`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `delegationId` | `u64` | Unique ID |
+| `delegator` | `Pubkey` | Who created the delegation |
+| `delegate` | `Pubkey` | Who receives the permission |
+| `nftMint` | `Pubkey` | Agent context |
+| `ownerVersion` | `u64` | Checked on use (invalidated on NFT transfer) |
+| `can_*` | `bool` | 7 permission flags (see DelegationPermissions) |
+| `maxSpendPerTx` | `u64` | Per-tx limit (0 = unlimited) |
+| `maxSpendTotal` | `u64` | Total limit (0 = unlimited) |
+| `spentTotal` | `u64` | Running total |
+| `depth` | `u8` | 0 = direct, max 2 for sub-delegations |
+
+### PaymentRequirement
+
+Derived from `["payment_req", nftMint, serviceTypeSeed]`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `nftMint` | `Pubkey` | Agent this requirement belongs to |
+| `serviceType` | `ServiceType` | Service this payment gates |
+| `scheme` | `PaymentScheme` | Exact or UpTo |
+| `amount` | `u64` | Required payment amount |
+| `tokenMint` | `Pubkey` | Accepted token |
+| `payTo` | `Pubkey` | Payment recipient |
+| `description` | `String` | Human-readable description |
+| `resource` | `String` | Resource path (e.g., `/v1/chat`) |
+| `active` | `bool` | Whether the requirement is enforced |
+
+## Events
+
+The program emits 17 event types. Parse them from transaction logs or full transaction data.
+
+### Event parsing
+
+```typescript
+import {
+  parseEventsFromLogs,
+  parseEventsFromTx,
+  findEvent,
+  type X84Event,
+  type PaymentSettledEvent,
+  type AgentRegisteredEvent,
+} from "@x84-ai/sdk";
+
+// Parse from transaction signature
+const events = await parseEventsFromTx(program, connection, txSignature);
+const settled = findEvent(events, "paymentSettled") as PaymentSettledEvent;
+```
+
+| Function | Input | Description |
+|----------|-------|-------------|
+| `parseEventsFromLogs` | Log strings | Parse events from raw log output |
+| `parseEventsFromTx` | Transaction signature | Fetch transaction and parse all events |
+| `findEvent` | Event array + event name | Find the first event of a given type |
+
+### Event types
+
+| Event | Key fields |
+|-------|-----------|
+| `agentRegistered` | nftMint, owner, metadataUri, feedbackAuthority |
+| `metadataUpdated` | nftMint, oldHash, newHash, newUri, viaDelegation |
+| `agentDeactivated` | nftMint |
+| `agentReactivated` | nftMint |
+| `agentClaimed` | nftMint, oldOwner, newOwner, newOwnerVersion |
+| `feedbackAuthorityUpdated` | nftMint, oldAuthority, newAuthority |
+| `serviceAdded` | nftMint, serviceType, endpoint |
+| `serviceUpdated` | nftMint, serviceType, newEndpoint |
+| `serviceRemoved` | nftMint, serviceType |
+| `feedbackGiven` | nftMint, reviewer, score, tag1, tag2 |
+| `feedbackRevoked` | nftMint, reviewer |
+| `validationRequested` | nftMint, validator, requestHash |
+| `validationResponded` | nftMint, validator, score |
+| `delegationCreated` | nftMint, delegator, delegate, delegationId, depth |
+| `delegationRevoked` | nftMint, delegator, delegate, delegationId |
+| `paymentRequirementSet` | nftMint, serviceType, scheme, amount |
+| `paymentSettled` | paymentId, nftMint, payer, payee, amount, feeAmount |

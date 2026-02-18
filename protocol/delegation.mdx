@@ -1,0 +1,224 @@
+---
+title: "Delegation"
+description: "Granular permission grants with spending limits and cascading invalidation"
+---
+
+Delegations allow an agent owner to grant specific permissions to other wallets. A delegate can update metadata, submit feedback, spend tokens, or manage services on behalf of the agent -- scoped by fine-grained permissions and constraints.
+
+Delegations also power x402 budget-based payments. By combining an on-chain delegation with an SPL Token approve, users can authorize autonomous spending without signing each transaction.
+
+## Delegation PDA
+
+Seeds: `[b"delegation", delegator.as_ref(), delegate.as_ref(), delegation_id.to_le_bytes()]`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `delegation_id` | `u64` | Unique ID from the agent's `delegation_count` counter. |
+| `delegator` | `Pubkey` | Wallet granting permissions. |
+| `delegate` | `Pubkey` | Wallet receiving permissions. |
+| `nft_mint` | `Pubkey` | Agent context (NFT mint). |
+| `owner_version` | `u64` | Stored at creation, verified at use. Mismatches invalidate the delegation. |
+| `can_transact` | `bool` | Spend tokens on behalf of the agent. |
+| `can_give_feedback` | `bool` | Submit feedback as the agent. |
+| `can_update_metadata` | `bool` | Update agent metadata URI and hash. |
+| `can_update_pricing` | `bool` | Change payment requirements. |
+| `can_register_services` | `bool` | Add, update, or remove services. |
+| `can_manage` | `bool` | All permissions except transferring ownership. |
+| `can_redelegate` | `bool` | Create sub-delegations. |
+| `max_spend_per_tx` | `u64` | Maximum tokens per transaction. 0 = no limit. |
+| `max_spend_total` | `u64` | Maximum cumulative tokens. 0 = no limit. |
+| `spent_total` | `u64` | Running total of tokens spent via this delegation. |
+| `allowed_tokens` | `Vec<Pubkey>` (max 5) | Allowed token mints. Empty = all tokens allowed. |
+| `allowed_programs` | `Vec<Pubkey>` (max 5) | Allowed CPI targets. Empty = all programs. Reserved for future use. |
+| `expires_at` | `i64` | Unix timestamp expiry. 0 = no expiry. |
+| `uses_remaining` | `u64` | Remaining uses. 0 = unlimited. |
+| `total_uses` | `u64` | Total uses so far. |
+| `active` | `bool` | Whether the delegation is active. |
+| `parent_delegation` | `Option<Pubkey>` | If this is a sub-delegation, points to the parent Delegation PDA. |
+| `depth` | `u8` | Delegation depth. 0 = direct from owner, 1 = sub, 2 = sub-sub. |
+| `created_at` | `i64` | Unix timestamp. |
+| `revoked_at` | `Option<i64>` | Timestamp of revocation, if revoked. |
+| `bump` | `u8` | PDA bump seed. |
+
+## Permission flags
+
+Seven boolean flags control what a delegate can do:
+
+| Permission | Description |
+|-----------|-------------|
+| `can_transact` | Spend tokens on behalf of the agent (used for x402 settlements). |
+| `can_give_feedback` | Submit feedback as the agent. |
+| `can_update_metadata` | Update the agent's metadata URI and hash. |
+| `can_update_pricing` | Modify payment requirements for services. |
+| `can_register_services` | Add, update, or remove service endpoints. |
+| `can_manage` | Grants all permissions except NFT transfer. A shorthand for full control. |
+| `can_redelegate` | Create sub-delegations (required for delegation chaining). |
+
+## Constraints
+
+Constraints limit what a delegate can do even when they have the right permission:
+
+| Constraint | Type | Description |
+|-----------|------|-------------|
+| `max_spend_per_tx` | `u64` | Per-transaction spending cap. 0 = unlimited. |
+| `max_spend_total` | `u64` | Cumulative spending cap. 0 = unlimited. |
+| `allowed_tokens` | `Vec<Pubkey>` | Whitelist of token mints. Empty = all allowed. Max 5. |
+| `allowed_programs` | `Vec<Pubkey>` | Whitelist of CPI targets. Empty = all allowed. Max 5. |
+| `expires_at` | `i64` | Unix timestamp after which the delegation is invalid. 0 = no expiry. |
+| `uses_remaining` | `u64` | Number of remaining uses before the delegation expires. 0 = unlimited. |
+
+<Tip>
+  Zero values mean "no limit" for all constraint fields. Setting `max_spend_per_tx = 0` means there is no per-transaction cap, not that the delegate cannot spend.
+</Tip>
+
+## Delegation depth
+
+Delegations support up to 3 levels of chaining:
+
+| Depth | Relationship |
+|-------|-------------|
+| 0 | Owner delegates to a wallet. |
+| 1 | That wallet sub-delegates to another wallet. |
+| 2 | The sub-delegate creates a sub-sub-delegation (maximum depth). |
+
+When creating a sub-delegation, the program enforces that the child's constraints are a subset of the parent's:
+
+- `max_spend_total` cannot exceed the parent's remaining budget (`parent.max_spend_total - parent.spent_total`).
+- `expires_at` cannot be later than the parent's expiry.
+- `allowed_tokens` must be a subset of the parent's allowed tokens.
+- `allowed_programs` must be a subset of the parent's allowed programs.
+- Permissions must be a subset of the parent's permissions.
+
+<Warning>
+  The maximum `depth` value is 2, meaning 3 total levels (owner, delegate, sub-delegate). Attempting to create a delegation at depth 3 or greater will fail with `MaxDelegationDepthExceeded`.
+</Warning>
+
+## Cascading invalidation via owner_version
+
+When an agent NFT is transferred and `claim_agent` is called, the `owner_version` on the `AgentIdentity` increments. Every delegation stores the `owner_version` at creation time. At use time, the program checks:
+
+```
+delegation.owner_version == agent.owner_version
+```
+
+If the values do not match, the delegation is rejected. This provides instant, zero-cost invalidation of all delegations when an agent changes hands -- no need to iterate and revoke each one individually.
+
+Sub-delegations are also invalidated because the parent delegation (which they verify at use time) fails the `owner_version` check.
+
+## DelegationBuilder fluent API
+
+The SDK provides a builder pattern for constructing delegations:
+
+```typescript
+import { DelegationBuilder } from "@x84-ai/sdk";
+
+const { instruction, delegationPda, delegationId } = await new DelegationBuilder()
+  .transact()
+  .feedback()
+  .metadata()
+  .spendLimit(new BN(1_000_000), new BN(10_000_000)) // per-tx, total
+  .tokens([usdcMint])
+  .expiry(Math.floor(Date.now() / 1000) + 86400) // 24 hours
+  .uses(100)
+  .build(program, delegatorPubkey, delegatePubkey, nftMint);
+// Signer: delegatorKeypair
+```
+
+### Permission methods
+
+| Method | Sets |
+|--------|------|
+| `.transact()` | `can_transact = true` |
+| `.feedback()` | `can_give_feedback = true` |
+| `.metadata()` | `can_update_metadata = true` |
+| `.pricing()` | `can_update_pricing = true` |
+| `.services()` | `can_register_services = true` |
+| `.manage()` | `can_manage = true` |
+| `.redelegate()` | `can_redelegate = true` |
+| `.allPermissions()` | All flags set to `true`. |
+
+### Constraint methods
+
+| Method | Sets |
+|--------|------|
+| `.spendLimit(perTx, total)` | `max_spend_per_tx` and `max_spend_total` |
+| `.tokens(mints[])` | `allowed_tokens` |
+| `.programs(ids[])` | `allowed_programs` |
+| `.expiry(unix)` | `expires_at` |
+| `.uses(count)` | `uses_remaining` |
+| `.parent(delegationPda)` | `parent_delegation` (for sub-delegations) |
+
+## x402 budget integration
+
+Delegations power budget-based x402 payments. Instead of signing every payment transaction, a user sets up a spending budget once and the x84 facilitator auto-debits within the budget constraints.
+
+<Steps>
+  <Step title="Create delegation and SPL approve in one transaction">
+    The user signs a single transaction containing two instructions:
+
+    1. `spl_token::approve` -- authorizes the x84 facilitator wallet as delegate on the user's token account (ATA), with an amount matching `max_spend_total`.
+    2. `x84::create_delegation` -- creates the on-chain delegation with `can_transact = true` and desired constraints.
+
+    ```typescript
+    import { createApproveInstruction } from "@solana/spl-token";
+    import { DelegationBuilder } from "@x84-ai/sdk";
+
+    // 1. SPL Token approve
+    const approveIx = createApproveInstruction(
+      payerAta,
+      facilitatorPubkey,
+      payerPubkey,
+      10_000_000 // 10 USDC budget
+    );
+
+    // 2. x84 delegation
+    const { instruction: delegationIx } = await new DelegationBuilder()
+      .transact()
+      .spendLimit(new BN(1_000_000), new BN(10_000_000))
+      .tokens([usdcMint])
+      .expiry(Math.floor(Date.now() / 1000) + 86400 * 30) // 30 days
+      .build(program, payerPubkey, facilitatorPubkey, nftMint);
+
+    // Bundle into one transaction
+    const tx = new Transaction().add(approveIx, delegationIx);
+    ```
+  </Step>
+  <Step title="Facilitator auto-debits on each request">
+    When the user calls an x402-gated agent endpoint, the x402 gate reads the `X-DELEGATION` header, loads the Delegation PDA, verifies all constraints, and uses the SPL Token delegate authority to transfer tokens from the user's ATA. No per-request signature is needed.
+  </Step>
+  <Step title="Spent tracking">
+    Each delegated settlement updates `delegation.spent_total` on-chain, providing a full audit trail of cumulative spending per delegation.
+  </Step>
+</Steps>
+
+## Revocation
+
+```typescript
+import { revokeDelegation } from "@x84-ai/sdk";
+
+await revokeDelegation(program, {
+  caller: delegatorPubkey, // delegator or agent owner
+  nftMint: agentId,
+  delegationPda: delegationPda,
+});
+```
+
+A single revocation transaction can invalidate both the on-chain delegation and the SPL Token approve. The delegator or the agent owner can revoke at any time.
+
+Sub-delegations that reference a revoked parent become invalid at use time -- the program checks the parent's `active` status during verification.
+
+<Accordion title="Delegation verification checks (full list)">
+  When a delegate attempts to use their delegation, the program runs these checks in order:
+
+  1. `delegation.active == true`
+  2. `delegation.delegate == caller`
+  3. `delegation.nft_mint == agent.nft_mint`
+  4. `delegation.owner_version == agent.owner_version`
+  5. Expiry: `delegation.expires_at == 0` or `delegation.expires_at > now`
+  6. Uses: `delegation.uses_remaining == 0` or `delegation.uses_remaining > 0`
+  7. Required permission flag is set
+  8. If spending: `amount <= max_spend_per_tx` and `spent_total + amount <= max_spend_total`
+  9. If token specified: `allowed_tokens` is empty or contains the token mint
+  10. If program specified: `allowed_programs` is empty or contains the program ID
+  11. If `parent_delegation` is set: recursively verify the parent (max depth ensures termination)
+</Accordion>

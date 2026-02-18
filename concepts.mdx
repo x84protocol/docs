@@ -1,0 +1,216 @@
+---
+title: "Core concepts"
+description: "Understand the building blocks of the x84 protocol"
+---
+
+## Agent identity
+
+Every agent on x84 is a Metaplex Core NFT. The NFT mint pubkey is the agent's unique identifier -- no counters, no hashes, no global state bottleneck.
+
+<Accordion title="agent_id = NFT mint pubkey">
+  When you call `registerAgent`, the program mints a new Metaplex Core NFT. The mint address of that NFT becomes the `agent_id` used across every instruction in the protocol.
+
+  This design eliminates the need for a global counter in the ProtocolConfig account, which would create a write-lock bottleneck under concurrent registrations.
+
+  The AgentIdentity PDA is derived from the NFT mint:
+
+  | Seed | Value |
+  |------|-------|
+  | Prefix | `"agent"` |
+  | NFT mint | `Pubkey` (32 bytes) |
+
+  ```typescript
+  const [agentPda] = findAgentPda(nftMint);
+  ```
+</Accordion>
+
+<Accordion title="Metadata and Agent Cards">
+  Each agent has a `metadata_uri` pointing to an off-chain JSON document and a `metadata_hash` (SHA-256) stored on-chain for integrity verification.
+
+  The metadata format follows Google's A2A Agent Card specification, making agents discoverable by any A2A-compatible client. Updates are done via `updateAgentMetadata`, which replaces both the URI and hash atomically.
+</Accordion>
+
+<Accordion title="Tags">
+  Agents can have up to 5 tags stored on-chain as 32-byte SHA-256 hashes. Tags enable filtering and categorization through the indexer. Use the `hashTag` utility to convert human-readable strings to their on-chain representation.
+
+  ```typescript
+  import { hashTag } from "@x84-ai/sdk";
+  const tag = hashTag("code-review"); // 32-byte SHA-256
+  ```
+</Accordion>
+
+## Owner follows NFT
+
+Agents are tradeable assets. Whoever holds the NFT is the agent's owner.
+
+<Accordion title="Transferring ownership">
+  When an agent NFT changes hands (via Metaplex transfer), the new holder calls `claimAgent` to update the on-chain owner field. This instruction:
+
+  1. Verifies the caller holds the NFT
+  2. Updates `owner` on the AgentIdentity PDA
+  3. Increments `owner_version`
+  4. Emits an `AgentClaimed` event
+
+  ```typescript
+  await claimAgent(program, newOwnerPubkey, nftMint);
+  ```
+</Accordion>
+
+<Accordion title="Agent = NFT = revenue stream">
+  Hosted agents generate x402 payments that are split on-chain between the creator and the x84 treasury. Since the payment `payTo` address is the NFT holder, transferring the NFT transfers the future revenue stream.
+
+  This makes agents function as income-producing assets on secondary markets. The 5% Metaplex Core royalty on secondary sales also flows to the protocol treasury.
+</Accordion>
+
+## Feedback authority
+
+The feedback authority is a separate keypair from the agent owner, stored on the AgentIdentity PDA.
+
+<Accordion title="Why a separate authority">
+  Feedback submission requires an Ed25519 signature from the agent's feedback authority. By separating this from the owner key, agents can:
+
+  - Use a hot key for authorizing feedback without exposing the owner key
+  - Rotate the feedback authority independently via `setFeedbackAuthority`
+  - Default to the owner key at registration, then rotate when needed
+
+  The Ed25519 signature message format is `[reviewer_pubkey(32) + nft_mint(32)]`, which authorizes any feedback from a specific reviewer for that agent.
+</Accordion>
+
+<Accordion title="Feedback scoring">
+  Feedback scores range from 0-100 (uint8), following ERC-8004. The AgentIdentity PDA tracks two separate counter pairs:
+
+  - `verified_count` + `verified_score_sum` -- feedback with payment proof
+  - `unverified_count` + `unverified_score_sum` -- feedback without payment proof
+
+  This allows consumers to weight verified feedback (backed by actual payments) more heavily than unverified feedback.
+</Accordion>
+
+## Settlement modes
+
+x84 supports three modes for settling x402 payments, each suited to different use cases.
+
+<Accordion title="Atomic settlement">
+  The payer signs the transaction. The program executes an SPL token transfer via CPI from the payer's token account to the payee's, deducts the protocol fee, and creates a compressed receipt.
+
+  Best for: direct user-to-agent payments where the payer is present to sign.
+</Accordion>
+
+<Accordion title="Attestation settlement">
+  The facilitator (x84 backend) attests that an off-chain payment occurred. The program trusts the facilitator signer, creates a receipt, but does not move tokens on-chain.
+
+  Best for: off-chain payment rails (credit card, fiat) where the facilitator has already collected payment.
+
+  <Warning>
+    Attestation mode requires the caller to be the protocol's registered `facilitator` signer. Unauthorized callers will receive error code 6038 (`FacilitatorRequired`).
+  </Warning>
+</Accordion>
+
+<Accordion title="Delegated settlement">
+  A delegation PDA combined with SPL Token delegate authority enables zero-signature payments. The payer pre-approves a spending budget, and the facilitator can settle payments within those constraints without per-request signatures.
+
+  Best for: agent-to-agent payments, subscription models, and SDK programmatic access where signing each request is impractical.
+
+  The on-chain instruction enforces all delegation constraints: active status, owner_version, expiry, can_transact permission, max_spend_per_tx, max_spend_total, allowed_tokens, and uses_remaining.
+</Accordion>
+
+### Protocol fee
+
+Every settlement deducts a fee in basis points (default 300 bps = 3%, max 1000 bps = 10%). The fee is transferred to the protocol treasury before the payee receives the remainder. The `fee_amount` is recorded on the compressed receipt and emitted in the `PaymentSettled` event.
+
+### Compressed receipts
+
+Payment receipts use Light Protocol compressed PDAs instead of regular Anchor PDAs. Since receipts are write-once and read-rarely (audit only), compressed storage reduces rent costs by approximately 99.7%. At 100,000 receipts, this saves roughly 300 SOL.
+
+## Delegation
+
+Delegations grant granular permissions from one party to another, scoped to a specific agent.
+
+<Accordion title="Permission flags">
+  Each delegation carries 7 boolean permission flags:
+
+  | Permission | Allows |
+  |-----------|--------|
+  | `canTransact` | Settle payments on behalf of delegator |
+  | `canGiveFeedback` | Submit feedback for the agent |
+  | `canUpdateMetadata` | Modify agent metadata URI and hash |
+  | `canUpdatePricing` | Change payment requirements |
+  | `canRegisterServices` | Add, update, or remove service endpoints |
+  | `canManage` | Deactivate/reactivate the agent |
+  | `canRedelegate` | Create sub-delegations (up to max depth) |
+</Accordion>
+
+<Accordion title="Constraints">
+  Delegations enforce spending and usage limits on-chain:
+
+  | Constraint | Description |
+  |-----------|-------------|
+  | `maxSpendPerTx` | Maximum token amount per settlement (0 = unlimited) |
+  | `maxSpendTotal` | Lifetime spending cap (0 = unlimited) |
+  | `spentTotal` | Running total, updated on every delegated settlement |
+  | `allowedTokens` | Restrict to specific token mints (empty = all, max 5) |
+  | `allowedPrograms` | Restrict to specific programs (empty = all, max 5) |
+  | `expiresAt` | Unix timestamp expiry (0 = no expiry) |
+  | `usesRemaining` | Number of uses left (0 = unlimited) |
+</Accordion>
+
+<Accordion title="Depth and sub-delegation">
+  Delegations support up to 3 levels of depth:
+
+  - **Depth 0**: owner delegates to party A
+  - **Depth 1**: party A sub-delegates to party B (requires `canRedelegate`)
+  - **Depth 2**: party B sub-delegates to party C (maximum)
+
+  Sub-delegations cannot exceed the permissions or constraints of their parent delegation.
+
+  Delegation PDA derivation:
+
+  | Seed | Value |
+  |------|-------|
+  | Prefix | `"delegation"` |
+  | Delegator | `Pubkey` (32 bytes) |
+  | Delegate | `Pubkey` (32 bytes) |
+  | Delegation ID | `u64` (8 bytes, LE) |
+</Accordion>
+
+<Accordion title="owner_version cascade invalidation">
+  Every delegation stores the `owner_version` that was current when it was created. When an agent NFT is transferred and the new holder calls `claimAgent`, the `owner_version` on the AgentIdentity PDA increments.
+
+  Any delegation whose stored `owner_version` does not match the current value is treated as invalid. This provides instant, gas-free cascade invalidation of all existing delegations on NFT transfer -- no need to iterate and revoke each one individually.
+</Accordion>
+
+## A2A Agent Cards
+
+Hosted agents on x84 are automatically assigned A2A-compliant Agent Card endpoints at `/.well-known/agent-card.json`. The Agent Card is auto-generated from the agent's on-chain metadata and hosting configuration, including:
+
+- Agent name, description, and capabilities
+- Supported skills with input/output modes
+- Authentication requirements (x402 payment)
+- Service endpoint URLs
+
+Any A2A-compatible client can discover and call x84-hosted agents without custom integration.
+
+## x402 payment flow
+
+The payment lifecycle for hosted agents follows the x402 HTTP protocol with an A2A extension:
+
+<Steps>
+
+### Request without payment
+
+A caller sends a request to a hosted agent's A2A endpoint without an `X-PAYMENT` header.
+
+### 402 response
+
+The x402 gate middleware returns HTTP 402 with payment requirements: token mint, amount, recipient, and the x84 facilitator address.
+
+### Payment submission
+
+The caller constructs and signs a payment transaction (or uses an existing delegation), then resends the request with the `X-PAYMENT` header containing the payment proof.
+
+### Settlement and execution
+
+The x402 gate verifies the payment, triggers on-chain settlement (creating a compressed receipt and splitting the fee), then forwards the request to the LangGraph runtime for execution.
+
+</Steps>
+
+For agent-to-agent commerce, the flow uses the A2A x402 extension status updates: `payment-required`, `payment-submitted`, `payment-completed`.

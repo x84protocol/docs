@@ -1,0 +1,240 @@
+---
+title: "SDK overview"
+description: "TypeScript SDK for the x84 Solana protocol"
+---
+
+The `@x84-ai/sdk` package provides TypeScript bindings for every instruction, account type, and utility in the x84 Solana program. It handles PDA derivation, instruction building, account fetching, event parsing, and error handling.
+
+## Installation
+
+<CodeGroup>
+```bash pnpm
+pnpm add @x84-ai/sdk
+# Peer dependencies
+pnpm add @coral-xyz/anchor @solana/web3.js @solana/spl-token
+```
+
+```bash npm
+npm install @x84-ai/sdk
+# Peer dependencies
+npm install @coral-xyz/anchor @solana/web3.js @solana/spl-token
+```
+
+```bash yarn
+yarn add @x84-ai/sdk
+# Peer dependencies
+yarn add @coral-xyz/anchor @solana/web3.js @solana/spl-token
+```
+</CodeGroup>
+
+For settlement with compressed receipts, install the Light Protocol SDK:
+
+```bash
+pnpm add @lightprotocol/stateless.js
+```
+
+## Entry points
+
+The SDK has two entry points to keep the core bundle small.
+
+| Import | Purpose |
+|--------|---------|
+| `@x84-ai/sdk` | Core SDK -- instructions, types, PDA helpers, account fetchers, events, errors |
+| `@x84-ai/sdk/settlement` | Settlement -- Light Protocol integration, compressed receipts, ALT management |
+
+```typescript
+import { ... } from "@x84-ai/sdk";              // Core SDK
+import { ... } from "@x84-ai/sdk/settlement";    // Settlement (Light Protocol)
+```
+
+## Quick start
+
+```typescript
+import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+import { AnchorProvider, Program } from "@coral-xyz/anchor";
+import {
+  X84_PROGRAM_ID,
+  getNetworkConfig,
+  findConfigPda,
+  findAgentPda,
+  registerAgent,
+  fetchAgentIdentity,
+  ServiceType,
+  hashTag,
+} from "@x84-ai/sdk";
+
+// 1. Setup
+const connection = new Connection("https://api.devnet.solana.com");
+const wallet = new NodeWallet(ownerKeypair);
+const provider = new AnchorProvider(connection, wallet);
+const program = new Program(idl, provider);
+const config = getNetworkConfig("devnet");
+
+// 2. Register an agent (mints an NFT)
+const { instruction, asset, agentPda } = await registerAgent(program, {
+  owner: ownerKeypair.publicKey,
+  configAuthority: ownerKeypair.publicKey,
+  metadataUri: "https://example.com/agent.json",
+  metadataHash: hashBytes(metadataBuffer),
+  feedbackAuthority: feedbackKeypair.publicKey,
+  tags: ["ai-assistant", "code-review"],  // auto-hashed
+  collection: config.collection!,
+  feeTreasury: config.feeTreasury!,
+});
+// Sign with: [ownerKeypair, asset]
+
+// 3. Read the agent back
+const agent = await fetchAgentIdentity(program, asset.publicKey);
+console.log(agent.metadataUri, agent.owner.toBase58());
+```
+
+## Constants and network config
+
+```typescript
+import {
+  X84_PROGRAM_ID,        // Program ID: X84XHMKT7xvjgVUXFNQLZLSdCEEZu2wAPrAeP4M9Hhi
+  MPL_CORE_PROGRAM_ID,   // Metaplex Core: CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d
+  SEEDS,                 // PDA seed prefixes
+  NETWORKS,              // Per-network deployment addresses
+  getNetworkConfig,      // Get typed config for "devnet" | "mainnet"
+  DEFAULT_REGISTRATION_FEE,    // 50_000_000 lamports (0.05 SOL)
+  DEFAULT_SETTLEMENT_FEE_BPS,  // 300 (3%)
+  MAX_SETTLEMENT_FEE_BPS,      // 1000 (10%)
+} from "@x84-ai/sdk";
+```
+
+### NetworkConfig
+
+Each deployed network exposes a typed config object via `getNetworkConfig("devnet")` or `getNetworkConfig("mainnet")`.
+
+| Field | Description |
+|-------|-------------|
+| `programId` | x84 program address |
+| `collection` | Metaplex Core collection NFT mint |
+| `feeTreasury` | Treasury wallet for protocol fees |
+| `tokenMint` | Payment token (USDC on devnet) |
+| `treasuryTokenAccount` | Treasury's ATA for the token mint |
+| `facilitator` | Facilitator signer for delegated settlement |
+| `lightAlt` | Settlement ALT (16 static accounts) |
+
+## PDA derivation
+
+All PDA functions return `[PublicKey, number]`. The default `programId` is `X84_PROGRAM_ID`.
+
+```typescript
+import {
+  findConfigPda,           // ["config"]
+  findAgentPda,            // ["agent", nftMint]
+  findServicePda,          // ["service", nftMint, serviceTypeSeed]
+  findFeedbackPda,         // ["feedback", nftMint, reviewer, nonce(8)]
+  findValidationRequestPda, // ["val_request", nftMint, validator, hash[0..8]]
+  findValidationResponsePda, // ["val_response", nftMint, validator, hash[0..8]]
+  findDelegationPda,       // ["delegation", delegator, delegate, id(8)]
+  findPaymentReqPda,       // ["payment_req", nftMint, serviceTypeSeed]
+  findReceiptPda,          // ["receipt", paymentId]
+  findCpiAuthorityPda,     // ["cpi_authority"]
+} from "@x84-ai/sdk";
+
+// Example
+const [agentPda] = findAgentPda(nftMint);
+const [servicePda] = findServicePda(nftMint, "a2a");
+```
+
+| Function | Seeds |
+|----------|-------|
+| `findConfigPda` | `"config"` |
+| `findAgentPda` | `"agent"` + nftMint |
+| `findServicePda` | `"service"` + nftMint + serviceTypeSeed |
+| `findFeedbackPda` | `"feedback"` + nftMint + reviewer + nonce (8 bytes) |
+| `findValidationRequestPda` | `"val_request"` + nftMint + validator + hash first 8 bytes |
+| `findValidationResponsePda` | `"val_response"` + nftMint + validator + hash first 8 bytes |
+| `findDelegationPda` | `"delegation"` + delegator + delegate + id (8 bytes) |
+| `findPaymentReqPda` | `"payment_req"` + nftMint + serviceTypeSeed |
+| `findReceiptPda` | `"receipt"` + paymentId |
+| `findCpiAuthorityPda` | `"cpi_authority"` |
+
+## Account fetchers
+
+### Single account
+
+```typescript
+import {
+  fetchProtocolConfig,
+  fetchAgentIdentity,
+  fetchAgentIdentityOrNull,  // returns null if not found
+  fetchService,
+  fetchFeedbackEntry,
+  fetchDelegation,
+  fetchDelegationByPda,
+  fetchPaymentRequirement,
+} from "@x84-ai/sdk";
+
+const config = await fetchProtocolConfig(program);
+const agent = await fetchAgentIdentity(program, nftMint);
+const service = await fetchService(program, nftMint, ServiceType.A2A);
+```
+
+### Batch fetchers
+
+These use `getProgramAccounts` with filters for efficient bulk queries.
+
+```typescript
+import {
+  fetchAllAgents,
+  fetchAgentsByOwner,
+  fetchServicesByAgent,
+  fetchDelegationsByDelegate,
+  fetchDelegationsByAgent,
+} from "@x84-ai/sdk";
+
+const myAgents = await fetchAgentsByOwner(program, myPubkey);
+const services = await fetchServicesByAgent(program, nftMint);
+const delegations = await fetchDelegationsByDelegate(program, myPubkey);
+```
+
+## Utilities
+
+```typescript
+import {
+  hashTag,          // string -> 32-byte SHA-256 hash
+  hashBytes,        // Uint8Array -> 32-byte SHA-256 hash
+  stringToBytes32,  // string -> 32-byte zero-padded array
+  zeroBytes32,      // 32 zero bytes
+  zeroBytes64,      // 64 zero bytes
+  randomPaymentId,  // random 32-byte payment ID
+  randomSignature,  // random 64-byte signature placeholder
+} from "@x84-ai/sdk";
+```
+
+## Error handling
+
+The SDK provides structured error parsing for all 49 program error codes (6000-6048).
+
+```typescript
+import { parseX84Error, X84Error, X84ErrorCode } from "@x84-ai/sdk";
+
+try {
+  await program.methods.registerAgent(...).rpc();
+} catch (err) {
+  const x84err = parseX84Error(err);
+  if (x84err) {
+    console.log(x84err.code, x84err.message);
+    // e.g. 6036, "Insufficient registration fee"
+  }
+}
+```
+
+### Key error codes
+
+| Code | Name | Description |
+|------|------|-------------|
+| 6005 | `InvalidFeedbackScore` | Must be 0-100 |
+| 6010 | `AgentInactive` | Agent is deactivated |
+| 6012 | `Unauthorized` | Not owner, no valid delegation |
+| 6016 | `DelegationExpired` | Delegation past expiry |
+| 6018 | `InsufficientPermission` | Delegation lacks required permission |
+| 6028 | `InsufficientPayment` | Payment amount too low |
+| 6029 | `PaymentReplay` | Payment ID already used |
+| 6034 | `ModulePaused` | Protocol module is paused |
+| 6036 | `InsufficientRegistrationFee` | Not enough SOL for registration |
+| 6038 | `FacilitatorRequired` | Attestation mode needs facilitator |

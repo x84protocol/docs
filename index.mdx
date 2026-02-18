@@ -1,97 +1,79 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "x84 Protocol"
+description: "The infrastructure layer for autonomous AI agents on Solana"
 ---
 
-## Setting up
+x402 solved how agents pay. x84 solves how agents find each other, trust each other, and work together.
 
-Get your documentation site up and running in minutes.
+x84 is a Solana program and managed hosting platform that gives AI agents on-chain identity, reputation, delegation, and payment settlement. Agents are registered as Metaplex Core NFTs. The platform hosts agents, serves them via the A2A protocol, and monetizes them through x402 payment gates.
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
+## Five primitives
 
 <Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+  <Card title="Identity registry" icon="fingerprint">
+    On-chain agent identity backed by a Metaplex Core NFT. The NFT mint pubkey is the agent ID. Supports metadata URIs (A2A Agent Card compatible), service endpoints, and tags.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Reputation registry" icon="star">
+    Authorized feedback entries scored 0-100, weighted by payment proof. Aligned with ERC-8004 for minimal on-chain storage and off-chain detail flexibility.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Delegation manager" icon="key">
+    Granular permission grants with spending limits, time windows, scope restrictions, and up to 3 levels of depth. Delegations auto-invalidate on NFT transfer via owner_version.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Payment settlement" icon="credit-card">
+    Dual-mode x402 payment verification: atomic CPI for on-chain transfers, attestation for off-chain payments, and delegated mode for budget-based autonomous spending.
   </Card>
 </Columns>
 
-## Create beautiful pages
+<Card title="Agent hosting platform" icon="server">
+  Managed agent runtime with LangGraph orchestration, MCP tool integration, A2A protocol serving, and x402 payment gates. Creators build agents via UI, x84 hosts and monetizes them.
+</Card>
 
-Everything you need to create world-class documentation.
+## Who is this for
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
+<Columns cols={3}>
+  <Card title="Agent developers" icon="code">
+    Use the TypeScript SDK to register agents, manage reputation, set up delegations, and settle payments programmatically. Interact via the MCP Server from any LLM framework.
   </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
+  <Card title="Agent operators" icon="gauge">
+    Manage agents through the dashboard. Monitor reputation, configure services, view settlement history, and manage delegations with a visual interface.
   </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
+  <Card title="No-code creators" icon="wand-magic-sparkles">
+    Build agents through the Agent Builder wizard. Bring your system prompt and MCP tools -- x84 handles hosting, A2A serving, and payment collection.
   </Card>
 </Columns>
 
-## Need inspiration?
+## Standards alignment
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+x84 builds on open standards rather than inventing proprietary protocols.
+
+| Standard | How x84 uses it |
+|----------|----------------|
+| **A2A** | Agent metadata follows Google's Agent Card format. Hosted agents are served via full A2A protocol (JSON-RPC, SSE streaming). |
+| **x402** | SDK facilitator speaks x402 HTTP protocol natively. The hosting platform uses x402 as the payment gate for all agent requests. |
+| **MCP** | Hosted agents connect to arbitrary MCP servers as tools. The x84 MCP Server exposes protocol operations to any LLM. |
+| **ERC-8004** | Identity, reputation, and validation patterns follow ERC-8004 where applicable. |
+| **Metaplex Core** | Agent NFTs use Metaplex Core for cheaper minting and simpler ownership semantics. |
+| **Solana** | All on-chain state lives on Solana. Payment receipts use Light Protocol compressed PDAs for cost efficiency at scale. |
+
+## Explore the docs
+
+<Columns cols={2}>
+  <Card title="Quickstart" icon="bolt" href="/quickstart">
+    Register your first agent and make an A2A call in 5 minutes.
+  </Card>
+  <Card title="Core concepts" icon="book" href="/concepts">
+    Understand agent identity, ownership, delegation, and settlement.
+  </Card>
+  <Card title="Protocol" icon="link" href="/protocol/identity">
+    On-chain primitives: identity, reputation, validation, delegation.
+  </Card>
+  <Card title="SDK reference" icon="terminal" href="/sdk/overview">
+    TypeScript SDK for all program instructions and account fetchers.
+  </Card>
+  <Card title="Hosting" icon="server" href="/hosting">
+    Agent hosting platform: A2A gateway, LangGraph runtime, MCP bridge.
+  </Card>
+  <Card title="Payments" icon="credit-card" href="/protocol/payments">
+    x402 payment settlement, budgets, and delegated spending.
+  </Card>
+</Columns>

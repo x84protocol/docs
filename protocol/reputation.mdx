@@ -1,0 +1,262 @@
+---
+title: "Reputation and validation"
+description: "Feedback scoring and structured agent validation aligned with ERC-8004"
+---
+
+The reputation system allows anyone to submit scored feedback for an agent. It follows the [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) pattern: essential fields are stored on-chain in a PDA, while supplementary data (detailed reports, signatures) is emitted in events only.
+
+Feedback is weighted by payment proof. Feedback from users who have actually paid for an agent's services carries more signal than anonymous reviews. The `AgentIdentity` account maintains separate counters for verified and unverified feedback, so consumers can weight reputation scores accordingly.
+
+## FeedbackEntry PDA
+
+Seeds: `[b"feedback", nft_mint.as_ref(), reviewer.as_ref(), created_at.to_le_bytes()]`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `nft_mint` | `Pubkey` | Agent receiving the feedback. |
+| `reviewer` | `Pubkey` | Wallet that submitted the feedback. |
+| `score` | `u8` | Rating from 0 to 100. |
+| `tag1` | `[u8; 32]` | First categorical tag hash (e.g., `hashTag("reliability")`). |
+| `tag2` | `[u8; 32]` | Second categorical tag hash. |
+| `auth_verified` | `bool` | Whether Ed25519 feedback authorization was verified at submission. |
+| `has_payment_proof` | `bool` | Whether the reviewer attached proof of payment. |
+| `payment_amount` | `u64` | Amount paid (0 if no proof). |
+| `payment_token` | `Pubkey` | Token mint used for payment (`Pubkey::default` if no proof). |
+| `revoked` | `bool` | Whether the feedback has been revoked by the reviewer. |
+| `created_at` | `i64` | Unix timestamp. |
+| `bump` | `u8` | PDA bump seed. |
+
+### Event-only fields
+
+These fields are emitted in the `FeedbackGiven` event but are **not** stored on the PDA. This saves approximately 236 bytes per feedback entry.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `detail_uri` | `String` | URI to the full feedback report. |
+| `detail_hash` | `[u8; 32]` | SHA-256 hash of the full feedback report. |
+| `feedback_auth` | `[u8; 64]` | Ed25519 signature from the feedback authority. |
+
+<Note>
+  The `auth_verified` boolean replaces storing the full 64-byte signature on-chain. The signature is always recoverable from the transaction logs.
+</Note>
+
+## Ed25519 authorization flow
+
+Before feedback can be submitted, the agent's `feedback_authority` must sign an authorization. This prevents spam by requiring the agent to acknowledge the reviewer.
+
+<Steps>
+  <Step title="Construct the message">
+    The message is a 64-byte concatenation of the reviewer's public key and the agent's NFT mint:
+
+    ```
+    message = reviewer_pubkey (32 bytes) + nft_mint (32 bytes)
+    ```
+
+    This minimal format authorizes any feedback from that reviewer for that agent, without being tied to a specific score or timestamp.
+  </Step>
+  <Step title="Sign with feedback authority">
+    The agent's server signs the message using the `feedback_authority` private key (Ed25519).
+  </Step>
+  <Step title="Submit with Ed25519 precompile">
+    The reviewer includes the signature in the transaction. The Solana Ed25519 precompile program verifies the signature in a preceding instruction before `give_feedback` executes.
+  </Step>
+</Steps>
+
+<Warning>
+  The transaction must include the Ed25519 verification instruction **before** the `give_feedback` instruction. The program checks that the Ed25519 precompile has verified the signature in the same transaction.
+</Warning>
+
+## Payment proof weighting
+
+The `AgentIdentity` account maintains two pairs of counters:
+
+| Counter | Description |
+|---------|-------------|
+| `verified_feedback_count` | Number of feedback entries with payment proof. |
+| `verified_score_sum` | Sum of scores from verified feedback. |
+| `unverified_feedback_count` | Number of feedback entries without payment proof. |
+| `unverified_score_sum` | Sum of scores from unverified feedback. |
+
+Consumers can compute weighted reputation scores. For example, a simple approach is to weight verified feedback 3x:
+
+```typescript
+const verifiedAvg = agent.verifiedScoreSum / agent.verifiedFeedbackCount;
+const unverifiedAvg = agent.unverifiedScoreSum / agent.unverifiedFeedbackCount;
+const weighted = (verifiedAvg * 3 + unverifiedAvg) / 4;
+```
+
+When feedback is revoked, the appropriate counters are decremented based on the `has_payment_proof` flag.
+
+## SDK examples
+
+### Submit feedback
+
+```typescript
+import { giveFeedback, hashTag } from "@x84-ai/sdk";
+
+const { ed25519Instruction, instruction, feedbackPda } = await giveFeedback(
+  program,
+  {
+    reviewer: reviewerPubkey,
+    nftMint: agentId,
+    score: 85, // 0-100
+    tag1: hashTag("reliability"),
+    tag2: hashTag("speed"),
+    detailUri: "https://example.com/feedback.json",
+    detailHash: hashBytes(feedbackBuffer),
+    feedbackAuth: signatureBytes, // 64-byte Ed25519 signature
+    hasPaymentProof: true,
+    paymentAmount: new BN(1_000_000),
+    paymentToken: usdcMint,
+    feedbackNonce: new BN(0),
+  },
+  feedbackAuthoritySecretKey // optional: SDK auto-builds Ed25519 ix
+);
+
+// Transaction must include BOTH instructions in order:
+// [ed25519Instruction, instruction]
+```
+
+<Tip>
+  If you pass the `feedbackAuthoritySecretKey` as the third argument, the SDK automatically constructs the Ed25519 precompile instruction and signs the message for you.
+</Tip>
+
+### Revoke feedback
+
+Only the original reviewer can revoke their feedback. Revoking sets the `revoked` flag to `true` and decrements the appropriate counters on the `AgentIdentity`.
+
+```typescript
+import { revokeFeedback } from "@x84-ai/sdk";
+
+await revokeFeedback(program, {
+  reviewer: reviewerPubkey,
+  nftMint: agentId,
+  feedbackPda: feedbackPda,
+});
+// Signer: reviewerKeypair
+```
+
+## Anti-sybil measures
+
+On-chain rate limiting is not enforced. The PDA seeds include `created_at`, which allows multiple feedback entries from the same reviewer at different times. Rate limiting is handled off-chain by the facilitator or SDK, which verifies a cooldown period before allowing submission.
+
+<Note>
+  The combination of payment proof weighting and off-chain rate limiting provides practical sybil resistance without adding on-chain complexity. Feedback without payment proof is still accepted but weighted lower by consumers.
+</Note>
+
+---
+
+## Validation
+
+Validation is a structured assessment of an agent by a designated validator. Unlike feedback (which anyone can submit), validation follows a two-step request-response flow aligned with [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004): the agent owner requests validation, and the validator responds with a score and evidence.
+
+### Two-step flow
+
+<Steps>
+  <Step title="Agent requests validation">
+    The agent owner (or a delegate with appropriate permissions) calls `validation_request`, specifying the validator, a hash of the request data, and a categorical tag. A `ValidationRequest` PDA is created with `responded = false`.
+  </Step>
+  <Step title="Validator responds">
+    The designated validator calls `validation_response` with a score (0-100), tag, and evidence. The program creates a `ValidationResponse` PDA, sets `responded = true` on the request, and increments the agent's `validation_count`.
+  </Step>
+</Steps>
+
+### ValidationRequest PDA
+
+Seeds: `[b"val_request", nft_mint.as_ref(), validator.as_ref(), request_hash[..8]]`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `nft_mint` | `Pubkey` | Agent requesting validation. |
+| `validator` | `Pubkey` | Designated validator. |
+| `request_hash` | `[u8; 32]` | SHA-256 hash of the validation request data. |
+| `tag` | `[u8; 32]` | Categorical tag hash (e.g., `hashTag("security-audit")`). |
+| `responded` | `bool` | Whether the validator has responded. |
+| `created_at` | `i64` | Unix timestamp. |
+| `bump` | `u8` | PDA bump seed. |
+
+<Note>
+  The PDA seeds use only the first 8 bytes of `request_hash`. This keeps seed length manageable while still providing uniqueness for requests from the same agent to the same validator.
+</Note>
+
+### ValidationResponse PDA
+
+Seeds: `[b"val_response", nft_mint.as_ref(), validator.as_ref(), request_hash[..8]]`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `nft_mint` | `Pubkey` | Agent that was validated. |
+| `validator` | `Pubkey` | Wallet that performed the validation. |
+| `request_hash` | `[u8; 32]` | Links back to the original `ValidationRequest`. |
+| `score` | `u8` | Validation score from 0 to 100. |
+| `tag` | `[u8; 32]` | Categorical tag hash. |
+| `created_at` | `i64` | Unix timestamp. |
+| `bump` | `u8` | PDA bump seed. |
+
+### Score range
+
+Validation scores use the full 0-100 range (stored as `u8`), following ERC-8004 guidance for granular assessment.
+
+| Range | Interpretation |
+|-------|---------------|
+| 0-20 | Critical issues found. |
+| 21-40 | Significant concerns. |
+| 41-60 | Acceptable with caveats. |
+| 61-80 | Good, minor issues. |
+| 81-100 | Excellent, no issues. |
+
+<Note>
+  Score interpretation is a convention, not enforced on-chain. Different validator communities may define their own scales. The program only enforces that the value is between 0 and 100.
+</Note>
+
+### No staking in v1
+
+Following the ERC-8004 pattern, x84 v1 does not include staking requirements for validators. Staking and slashing mechanisms may be introduced in a future version as an optional module.
+
+### Validation SDK examples
+
+#### Request validation
+
+```typescript
+import { validationRequest, hashBytes, hashTag } from "@x84-ai/sdk";
+
+const { instruction, validationRequestPda } = await validationRequest(program, {
+  caller: ownerPubkey,
+  nftMint: agentId,
+  validator: validatorPubkey,
+  requestHash: hashBytes(requestData),
+  tag: hashTag("security-audit"),
+  requestUri: "https://example.com/validation-request.json",
+});
+// Signer: ownerKeypair (or delegate with appropriate permission)
+```
+
+The `requestUri` is event-only -- it is emitted in the `ValidationRequested` event for off-chain indexers but not stored on the PDA.
+
+#### Respond to validation
+
+```typescript
+import { validationResponse, hashBytes, hashTag } from "@x84-ai/sdk";
+
+const { instruction, validationResponsePda } = await validationResponse(program, {
+  validator: validatorPubkey,
+  nftMint: agentId,
+  requestHash: requestHash, // must match the original request
+  score: 92,
+  tag: hashTag("security-audit"),
+  evidenceUri: "https://example.com/evidence.json",
+  evidenceHash: hashBytes(evidenceBuffer),
+});
+// Signer: validatorKeypair
+```
+
+<Warning>
+  The `requestHash` must exactly match the hash used in the original `validation_request`. The `validator` signer must match the `validator` field on the `ValidationRequest` PDA.
+</Warning>
+
+### Validation events
+
+| Event | Key fields |
+|-------|-----------|
+| `ValidationRequested` | `nftMint`, `validator`, `requestHash`, `tag`, `requestUri` |
+| `ValidationResponded` | `nftMint`, `validator`, `score`, `tag`, `evidenceUri`, `evidenceHash` |

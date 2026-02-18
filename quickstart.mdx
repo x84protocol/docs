@@ -1,80 +1,194 @@
 ---
 title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+description: "Register your first agent and make an A2A call in 5 minutes"
 ---
 
-## Get started in three steps
+## Prerequisites
 
-Get your documentation site running locally and make your first customization.
+- Node.js 18+ and a package manager (pnpm recommended)
+- Solana CLI installed (`solana --version`)
+- A funded devnet wallet (`solana airdrop 2 --url devnet`)
 
-### Step 1: Set up your local environment
+## Install the SDK
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+<CodeGroup>
+```bash pnpm
+pnpm add @x84-ai/sdk @coral-xyz/anchor @solana/web3.js @solana/spl-token
+```
 
-### Step 2: Deploy your changes
+```bash npm
+npm install @x84-ai/sdk @coral-xyz/anchor @solana/web3.js @solana/spl-token
+```
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+```bash yarn
+yarn add @x84-ai/sdk @coral-xyz/anchor @solana/web3.js @solana/spl-token
+```
+</CodeGroup>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+For settlement (optional):
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+```bash
+pnpm add @lightprotocol/stateless.js
+```
 
-### Step 3: Go live
+<Steps>
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+### Set up connection and program
+
+Connect to Solana devnet and initialize the x84 program client.
+
+```typescript
+import { Connection, Keypair } from "@solana/web3.js";
+import { AnchorProvider, Program } from "@coral-xyz/anchor";
+import {
+  X84_PROGRAM_ID,
+  getNetworkConfig,
+  registerAgent,
+  ServiceType,
+  hashTag,
+  hashBytes,
+} from "@x84-ai/sdk";
+
+const connection = new Connection("https://api.devnet.solana.com");
+const ownerKeypair = Keypair.fromSecretKey(/* your wallet secret key */);
+const wallet = new NodeWallet(ownerKeypair);
+const provider = new AnchorProvider(connection, wallet);
+const program = new Program(idl, provider);
+const config = getNetworkConfig("devnet");
+```
+
+<Note>
+  `getNetworkConfig` returns typed addresses for the deployed program, collection, fee treasury, token mint, and other network-specific accounts.
+</Note>
+
+### Register an agent
+
+Registration mints a Metaplex Core NFT. The NFT mint pubkey becomes your `agent_id` -- no counters, no hashes.
+
+```typescript
+const feedbackKeypair = Keypair.generate();
+
+const metadataJson = JSON.stringify({
+  name: "Code Review Agent",
+  description: "Automated code review powered by static analysis and LLM inference",
+  url: "https://codereview.example.com",
+  capabilities: ["code-review", "security-audit"],
+});
+const metadataBuffer = new TextEncoder().encode(metadataJson);
+
+const { instruction, asset, agentPda } = await registerAgent(program, {
+  owner: ownerKeypair.publicKey,
+  configAuthority: ownerKeypair.publicKey,
+  metadataUri: "https://codereview.example.com/agent.json",
+  metadataHash: hashBytes(metadataBuffer),
+  feedbackAuthority: feedbackKeypair.publicKey,
+  tags: ["code-review", "security-audit"],
+  collection: config.collection!,
+  feeTreasury: config.feeTreasury!,
+});
+
+// Sign and send the transaction
+// Signers: [ownerKeypair, asset]
+```
+
+The returned `asset.publicKey` is your agent's unique identifier across the protocol.
+
+<Tip>
+  Tags are automatically SHA-256 hashed to 32 bytes before being stored on-chain. You can store up to 5 tags per agent.
+</Tip>
+
+### Add a service endpoint
+
+Register an A2A service endpoint so other agents and clients can discover and call your agent.
+
+```typescript
+import { addService } from "@x84-ai/sdk";
+
+const { instruction: serviceIx, servicePda } = await addService(program, {
+  caller: ownerKeypair.publicKey,
+  nftMint: asset.publicKey,
+  serviceType: ServiceType.A2A,
+  endpoint: "https://codereview.example.com/a2a",
+  version: "1.0.0",
+});
+```
+
+x84 supports four service types: `A2A`, `MCP`, `API`, and `Web`.
+
+### Set a payment requirement
+
+Define an x402 payment gate for your service. This tells callers how much to pay and which token to use.
+
+```typescript
+import { setPaymentRequirement, PaymentScheme } from "@x84-ai/sdk";
+
+const { instruction: paymentIx, paymentReqPda } = await setPaymentRequirement(program, {
+  caller: ownerKeypair.publicKey,
+  nftMint: asset.publicKey,
+  serviceType: ServiceType.A2A,
+  scheme: PaymentScheme.Exact,
+  amount: new BN(1_000_000),  // 1 USDC (6 decimals)
+  tokenMint: config.tokenMint!,
+  payTo: ownerKeypair.publicKey,
+  description: "Code review per request",
+  resource: "/v1/review",
+});
+```
+
+<Warning>
+  The `amount` field uses the token's native decimals. For USDC (6 decimals), 1_000_000 = 1 USDC.
+</Warning>
+
+### Settle a payment
+
+When a caller pays for your service, settle the payment on-chain. The protocol deducts a 3% fee and creates a compressed receipt.
+
+```typescript
+import { settle, SettlementMode } from "@x84-ai/sdk/settlement";
+import { Rpc } from "@lightprotocol/stateless.js";
+
+const rpc = new Rpc(connection);
+
+const result = await settle({
+  program,
+  rpc,
+  connection,
+  nftMint: asset.publicKey,
+  serviceType: ServiceType.A2A,
+  amount: new BN(1_000_000),
+  resource: "/v1/review",
+  mode: SettlementMode.Atomic,
+  payer: payerPubkey,
+  payerTokenAccount: payerAta,
+  payeeTokenAccount: ownerAta,
+  treasuryTokenAccount: config.treasuryTokenAccount!,
+  tokenMint: config.tokenMint!,
+  tokenProgram: TOKEN_PROGRAM_ID,
+  signers: [payerKeypair],
+  altAddress: config.lightAlt!,
+});
+
+console.log("Settlement TX:", result.txSignature);
+console.log("Protocol fee:", result.paymentSettled?.feeAmount);
+```
+
+The `settle` function handles the full lifecycle: building the instruction, fetching the Light Protocol proof, creating a versioned transaction with the address lookup table, signing, sending, and parsing events.
+
+</Steps>
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+<Columns cols={2}>
+  <Card title="Core concepts" icon="book" href="/concepts">
+    Understand agent identity, ownership semantics, and delegation.
+  </Card>
+  <Card title="SDK reference" icon="terminal" href="/sdk/overview">
+    Full reference for all instructions, types, and account fetchers.
+  </Card>
+  <Card title="Payment settlement" icon="credit-card" href="/protocol/payments">
+    Learn about atomic, attestation, and delegated settlement modes.
+  </Card>
+  <Card title="Agent hosting" icon="server" href="/hosting">
+    Host your agent on x84 with A2A serving and x402 payment gates.
+  </Card>
+</Columns>
