@@ -3,9 +3,9 @@
   "theme": "aspen",
   "name": "x84 Protocol",
   "colors": {
-    "primary": "#E4E4E7",
+    "primary": "#FAFAFA",
     "light": "#FAFAFA",
-    "dark": "#E4E4E7"
+    "dark": "#27272A"
   },
   "favicon": "/favicon.svg",
   "appearance": {
