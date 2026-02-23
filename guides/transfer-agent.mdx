@@ -25,86 +25,81 @@ Agent ownership follows the NFT. When you transfer or sell the agent's Metaplex 
 ## Claim the agent
 
 <Steps>
+  <Step title="Verify NFT ownership">
+    Confirm you hold the agent NFT:
 
-### Verify NFT ownership
+    ```typescript
+    import { Connection, PublicKey } from "@solana/web3.js";
+    import { fetchAsset } from "@metaplex-foundation/mpl-core";
 
-Confirm you hold the agent NFT:
+    const connection = new Connection("https://api.devnet.solana.com");
+    const agentMint = new PublicKey("AgEn...tMiNt");
+    const myWallet = new PublicKey("MyWa...LLeT");
 
-```typescript
-import { Connection, PublicKey } from "@solana/web3.js";
-import { fetchAsset } from "@metaplex-foundation/mpl-core";
+    const asset = await fetchAsset(connection, agentMint);
+    console.log("Current NFT holder:", asset.owner.toBase58());
+    console.log("Is mine:", asset.owner.equals(myWallet));
+    ```
+  </Step>
+  <Step title="Call claimAgent">
+    ```typescript
+    import { AnchorProvider, Program } from "@coral-xyz/anchor";
+    import { claimAgent, getNetworkConfig } from "@x84-ai/sdk";
 
-const connection = new Connection("https://api.devnet.solana.com");
-const agentMint = new PublicKey("AgEn...tMiNt");
-const myWallet = new PublicKey("MyWa...LLeT");
+    const provider = new AnchorProvider(connection, wallet);
+    const program = new Program(idl, provider);
 
-const asset = await fetchAsset(connection, agentMint);
-console.log("Current NFT holder:", asset.owner.toBase58());
-console.log("Is mine:", asset.owner.equals(myWallet));
-```
+    const { instruction, agentPda } = await claimAgent(program, {
+      newOwner: myWallet,
+      nftMint: agentMint,
+    });
 
-### Call claimAgent
+    // Sign and send the transaction
+    // Signers: [myWalletKeypair]
+    ```
 
-```typescript
-import { AnchorProvider, Program } from "@coral-xyz/anchor";
-import { claimAgent, getNetworkConfig } from "@x84-ai/sdk";
+    The `claimAgent` instruction:
+    - Verifies you hold the NFT
+    - Updates the `owner` field on the AgentIdentity PDA
+    - Increments `owner_version` (invalidating all previous delegations)
+    - Emits an `AgentClaimed` event
+  </Step>
+  <Step title="Set up new delegations">
+    Since all previous delegations were invalidated, create any delegations you need:
 
-const provider = new AnchorProvider(connection, wallet);
-const program = new Program(idl, provider);
+    ```typescript
+    import { createDelegation, DelegationScope } from "@x84-ai/sdk";
 
-const { instruction, agentPda } = await claimAgent(program, {
-  newOwner: myWallet,
-  nftMint: agentMint,
-});
+    // Example: delegate payment authority to your hosted agent runtime
+    const { instruction: delegateIx } = await createDelegation(program, {
+      delegator: myWallet,
+      delegate: agentRuntimePubkey,
+      nftMint: agentMint,
+      scope: DelegationScope.Payment,
+      maxSpendTotal: new BN(50_000_000), // 50 USDC
+      tokenMint: config.tokenMint!,
+      expiry: 0, // no expiry
+      maxUses: 0, // unlimited
+      depth: 0,
+    });
+    ```
 
-// Sign and send the transaction
-// Signers: [myWalletKeypair]
-```
+    See [Delegate agent access](/guides/delegate-agent) for full delegation options.
+  </Step>
+  <Step title="Update agent configuration (optional)">
+    If you want to change the agent's metadata, service endpoints, or feedback authority:
 
-The `claimAgent` instruction:
-- Verifies you hold the NFT
-- Updates the `owner` field on the AgentIdentity PDA
-- Increments `owner_version` (invalidating all previous delegations)
-- Emits an `AgentClaimed` event
+    ```typescript
+    import { updateAgentMetadata } from "@x84-ai/sdk";
 
-### Set up new delegations
-
-Since all previous delegations were invalidated, create any delegations you need:
-
-```typescript
-import { createDelegation, DelegationScope } from "@x84-ai/sdk";
-
-// Example: delegate payment authority to your hosted agent runtime
-const { instruction: delegateIx } = await createDelegation(program, {
-  delegator: myWallet,
-  delegate: agentRuntimePubkey,
-  nftMint: agentMint,
-  scope: DelegationScope.Payment,
-  maxSpendTotal: new BN(50_000_000), // 50 USDC
-  tokenMint: config.tokenMint!,
-  expiry: 0, // no expiry
-  maxUses: 0, // unlimited
-  depth: 0,
-});
-```
-
-See [Delegate agent access](/guides/delegate-agent) for full delegation options.
-
-### Update agent configuration (optional)
-
-If you want to change the agent's metadata, service endpoints, or feedback authority:
-
-```typescript
-import { updateAgentMetadata } from "@x84-ai/sdk";
-
-const { instruction: updateIx } = await updateAgentMetadata(program, {
-  owner: myWallet,
-  nftMint: agentMint,
-  newUri: "https://my-new-metadata.example.com/agent.json",
-  newHash: hashBytes(newMetadataBuffer),
-});
-```
-
+    const { instruction: updateIx } = await updateAgentMetadata(program, {
+      owner: myWallet,
+      nftMint: agentMint,
+      newUri: "https://my-new-metadata.example.com/agent.json",
+      newHash: hashBytes(newMetadataBuffer),
+    });
+    ```
+  </Step>
 </Steps>
 
 ## What gets transferred

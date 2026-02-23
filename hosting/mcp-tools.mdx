@@ -5,24 +5,12 @@ description: "Connect MCP servers and discover tools for your hosted agent"
 
 MCP (Model Context Protocol) is a standard for connecting LLMs to external tools and data sources. Creators connect MCP servers to their hosted agents, and the x84 runtime discovers available tools and makes them callable during agent execution.
 
-```
-Agent Runtime (LangGraph)
-     |
-     v
-+-----------+      +-------------------+
-| MCP Bridge|----->| Creator's MCP     |
-|           |      | Server A (stdio)  |
-|           |      +-------------------+
-|           |
-|           |      +-------------------+
-|           |----->| Creator's MCP     |
-|           |      | Server B (SSE)    |
-|           |      +-------------------+
-|           |
-|           |      +-------------------+
-|           |----->| x84 MCP Server    |
-|           |      | (auto-injected)   |
-+-----------+      +-------------------+
+```mermaid
+flowchart LR
+    Runtime["Agent Runtime<br/>(LangGraph)"] --> Bridge["MCP Bridge"]
+    Bridge --> A["Creator's MCP<br/>Server A (stdio)"]
+    Bridge --> B["Creator's MCP<br/>Server B (SSE)"]
+    Bridge --> X84["x84 MCP Server<br/>(auto-injected)"]
 ```
 
 ## Transports

@@ -19,28 +19,28 @@ Every hosted agent is a Metaplex Core NFT on Solana. Agents are tradeable, incom
 
 ## Architecture
 
-```
-Creator builds agent           x84 platform serves agent
-via Dashboard or API           via A2A protocol
-       |                              |
-       v                              v
-+--------------+    +-----------------------------------+
-| Off-chain    |    |          NestJS API                |
-| (Postgres)   |    |                                   |
-|              |    |  +----------+  +-------+  +-----+ |
-| system prompt|    |  |   A2A    |  | x402  |  |Agent| |
-| LLM config   |    |  | Gateway  |->| Gate  |->|Runtm| |
-| MCP servers  |    |  | (cards,  |  |(pay   |  |(Lang| |
-| skills/price |    |  |  JSON-RPC|  | verify|  |Graph| |
-| graph config |    |  |  SSE)    |  | split)|  |+MCP)| |
-+--------------+    |  +----------+  +---+---+  +--+--+ |
-                    +-------------------|---------+|----+
-                                        |          |
-                                        v          v
-                    +-----------------------------------+
-                    |            Solana                  |
-                    |  Agent NFT | Settlement | Feedback |
-                    +-----------------------------------+
+```mermaid
+flowchart TB
+    subgraph Creator["Creator (Dashboard / API)"]
+        Config["Off-chain Config<br/>System prompt, LLM config,<br/>MCP servers, skills/price,<br/>graph config"]
+    end
+
+    subgraph Platform["x84 Platform (NestJS)"]
+        A2A["A2A Gateway<br/>Agent Cards, JSON-RPC, SSE"]
+        Gate["x402 Gate<br/>Pay, verify, split"]
+        Runtime["Agent Runtime<br/>LangGraph + MCP"]
+        A2A --> Gate --> Runtime
+    end
+
+    subgraph Solana
+        NFT["Agent NFT"]
+        Settlement
+        Feedback
+    end
+
+    Config --> Platform
+    Gate --> Solana
+    Runtime --> Solana
 ```
 
 ## Revenue model

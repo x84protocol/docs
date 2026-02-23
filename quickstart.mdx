@@ -32,148 +32,142 @@ pnpm add @lightprotocol/stateless.js
 ```
 
 <Steps>
+  <Step title="Set up connection and program">
+    Connect to Solana devnet and initialize the x84 program client.
 
-### Set up connection and program
+    ```typescript
+    import { Connection, Keypair } from "@solana/web3.js";
+    import { AnchorProvider, Program } from "@coral-xyz/anchor";
+    import {
+      X84_PROGRAM_ID,
+      getNetworkConfig,
+      registerAgent,
+      ServiceType,
+      hashTag,
+      hashBytes,
+    } from "@x84-ai/sdk";
 
-Connect to Solana devnet and initialize the x84 program client.
+    const connection = new Connection("https://api.devnet.solana.com");
+    const ownerKeypair = Keypair.fromSecretKey(/* your wallet secret key */);
+    const wallet = new NodeWallet(ownerKeypair);
+    const provider = new AnchorProvider(connection, wallet);
+    const program = new Program(idl, provider);
+    const config = getNetworkConfig("devnet");
+    ```
 
-```typescript
-import { Connection, Keypair } from "@solana/web3.js";
-import { AnchorProvider, Program } from "@coral-xyz/anchor";
-import {
-  X84_PROGRAM_ID,
-  getNetworkConfig,
-  registerAgent,
-  ServiceType,
-  hashTag,
-  hashBytes,
-} from "@x84-ai/sdk";
+    <Note>
+      `getNetworkConfig` returns typed addresses for the deployed program, collection, fee treasury, token mint, and other network-specific accounts.
+    </Note>
+  </Step>
+  <Step title="Register an agent">
+    Registration mints a Metaplex Core NFT. The NFT mint pubkey becomes your `agent_id` -- no counters, no hashes.
 
-const connection = new Connection("https://api.devnet.solana.com");
-const ownerKeypair = Keypair.fromSecretKey(/* your wallet secret key */);
-const wallet = new NodeWallet(ownerKeypair);
-const provider = new AnchorProvider(connection, wallet);
-const program = new Program(idl, provider);
-const config = getNetworkConfig("devnet");
-```
+    ```typescript
+    const feedbackKeypair = Keypair.generate();
 
-<Note>
-  `getNetworkConfig` returns typed addresses for the deployed program, collection, fee treasury, token mint, and other network-specific accounts.
-</Note>
+    const metadataJson = JSON.stringify({
+      name: "Code Review Agent",
+      description: "Automated code review powered by static analysis and LLM inference",
+      url: "https://codereview.example.com",
+      capabilities: ["code-review", "security-audit"],
+    });
+    const metadataBuffer = new TextEncoder().encode(metadataJson);
 
-### Register an agent
+    const { instruction, asset, agentPda } = await registerAgent(program, {
+      owner: ownerKeypair.publicKey,
+      configAuthority: ownerKeypair.publicKey,
+      metadataUri: "https://codereview.example.com/agent.json",
+      metadataHash: hashBytes(metadataBuffer),
+      feedbackAuthority: feedbackKeypair.publicKey,
+      tags: ["code-review", "security-audit"],
+      collection: config.collection!,
+      feeTreasury: config.feeTreasury!,
+    });
 
-Registration mints a Metaplex Core NFT. The NFT mint pubkey becomes your `agent_id` -- no counters, no hashes.
+    // Sign and send the transaction
+    // Signers: [ownerKeypair, asset]
+    ```
 
-```typescript
-const feedbackKeypair = Keypair.generate();
+    The returned `asset.publicKey` is your agent's unique identifier across the protocol.
 
-const metadataJson = JSON.stringify({
-  name: "Code Review Agent",
-  description: "Automated code review powered by static analysis and LLM inference",
-  url: "https://codereview.example.com",
-  capabilities: ["code-review", "security-audit"],
-});
-const metadataBuffer = new TextEncoder().encode(metadataJson);
+    <Tip>
+      Tags are automatically SHA-256 hashed to 32 bytes before being stored on-chain. You can store up to 5 tags per agent.
+    </Tip>
+  </Step>
+  <Step title="Add a service endpoint">
+    Register an A2A service endpoint so other agents and clients can discover and call your agent.
 
-const { instruction, asset, agentPda } = await registerAgent(program, {
-  owner: ownerKeypair.publicKey,
-  configAuthority: ownerKeypair.publicKey,
-  metadataUri: "https://codereview.example.com/agent.json",
-  metadataHash: hashBytes(metadataBuffer),
-  feedbackAuthority: feedbackKeypair.publicKey,
-  tags: ["code-review", "security-audit"],
-  collection: config.collection!,
-  feeTreasury: config.feeTreasury!,
-});
+    ```typescript
+    import { addService } from "@x84-ai/sdk";
 
-// Sign and send the transaction
-// Signers: [ownerKeypair, asset]
-```
+    const { instruction: serviceIx, servicePda } = await addService(program, {
+      caller: ownerKeypair.publicKey,
+      nftMint: asset.publicKey,
+      serviceType: ServiceType.A2A,
+      endpoint: "https://codereview.example.com/a2a",
+      version: "1.0.0",
+    });
+    ```
 
-The returned `asset.publicKey` is your agent's unique identifier across the protocol.
+    x84 supports four service types: `A2A`, `MCP`, `API`, and `Web`.
+  </Step>
+  <Step title="Set a payment requirement">
+    Define an x402 payment gate for your service. This tells callers how much to pay and which token to use.
 
-<Tip>
-  Tags are automatically SHA-256 hashed to 32 bytes before being stored on-chain. You can store up to 5 tags per agent.
-</Tip>
+    ```typescript
+    import { setPaymentRequirement, PaymentScheme } from "@x84-ai/sdk";
 
-### Add a service endpoint
+    const { instruction: paymentIx, paymentReqPda } = await setPaymentRequirement(program, {
+      caller: ownerKeypair.publicKey,
+      nftMint: asset.publicKey,
+      serviceType: ServiceType.A2A,
+      scheme: PaymentScheme.Exact,
+      amount: new BN(1_000_000),  // 1 USDC (6 decimals)
+      tokenMint: config.tokenMint!,
+      payTo: ownerKeypair.publicKey,
+      description: "Code review per request",
+      resource: "/v1/review",
+    });
+    ```
 
-Register an A2A service endpoint so other agents and clients can discover and call your agent.
+    <Warning>
+      The `amount` field uses the token's native decimals. For USDC (6 decimals), 1_000_000 = 1 USDC.
+    </Warning>
+  </Step>
+  <Step title="Settle a payment">
+    When a caller pays for your service, settle the payment on-chain. The protocol deducts a 3% fee and creates a compressed receipt.
 
-```typescript
-import { addService } from "@x84-ai/sdk";
+    ```typescript
+    import { settle, SettlementMode } from "@x84-ai/sdk/settlement";
+    import { Rpc } from "@lightprotocol/stateless.js";
 
-const { instruction: serviceIx, servicePda } = await addService(program, {
-  caller: ownerKeypair.publicKey,
-  nftMint: asset.publicKey,
-  serviceType: ServiceType.A2A,
-  endpoint: "https://codereview.example.com/a2a",
-  version: "1.0.0",
-});
-```
+    const rpc = new Rpc(connection);
 
-x84 supports four service types: `A2A`, `MCP`, `API`, and `Web`.
+    const result = await settle({
+      program,
+      rpc,
+      connection,
+      nftMint: asset.publicKey,
+      serviceType: ServiceType.A2A,
+      amount: new BN(1_000_000),
+      resource: "/v1/review",
+      mode: SettlementMode.Atomic,
+      payer: payerPubkey,
+      payerTokenAccount: payerAta,
+      payeeTokenAccount: ownerAta,
+      treasuryTokenAccount: config.treasuryTokenAccount!,
+      tokenMint: config.tokenMint!,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      signers: [payerKeypair],
+      altAddress: config.lightAlt!,
+    });
 
-### Set a payment requirement
+    console.log("Settlement TX:", result.txSignature);
+    console.log("Protocol fee:", result.paymentSettled?.feeAmount);
+    ```
 
-Define an x402 payment gate for your service. This tells callers how much to pay and which token to use.
-
-```typescript
-import { setPaymentRequirement, PaymentScheme } from "@x84-ai/sdk";
-
-const { instruction: paymentIx, paymentReqPda } = await setPaymentRequirement(program, {
-  caller: ownerKeypair.publicKey,
-  nftMint: asset.publicKey,
-  serviceType: ServiceType.A2A,
-  scheme: PaymentScheme.Exact,
-  amount: new BN(1_000_000),  // 1 USDC (6 decimals)
-  tokenMint: config.tokenMint!,
-  payTo: ownerKeypair.publicKey,
-  description: "Code review per request",
-  resource: "/v1/review",
-});
-```
-
-<Warning>
-  The `amount` field uses the token's native decimals. For USDC (6 decimals), 1_000_000 = 1 USDC.
-</Warning>
-
-### Settle a payment
-
-When a caller pays for your service, settle the payment on-chain. The protocol deducts a 3% fee and creates a compressed receipt.
-
-```typescript
-import { settle, SettlementMode } from "@x84-ai/sdk/settlement";
-import { Rpc } from "@lightprotocol/stateless.js";
-
-const rpc = new Rpc(connection);
-
-const result = await settle({
-  program,
-  rpc,
-  connection,
-  nftMint: asset.publicKey,
-  serviceType: ServiceType.A2A,
-  amount: new BN(1_000_000),
-  resource: "/v1/review",
-  mode: SettlementMode.Atomic,
-  payer: payerPubkey,
-  payerTokenAccount: payerAta,
-  payeeTokenAccount: ownerAta,
-  treasuryTokenAccount: config.treasuryTokenAccount!,
-  tokenMint: config.tokenMint!,
-  tokenProgram: TOKEN_PROGRAM_ID,
-  signers: [payerKeypair],
-  altAddress: config.lightAlt!,
-});
-
-console.log("Settlement TX:", result.txSignature);
-console.log("Protocol fee:", result.paymentSettled?.feeAmount);
-```
-
-The `settle` function handles the full lifecycle: building the instruction, fetching the Light Protocol proof, creating a versioned transaction with the address lookup table, signing, sending, and parsing events.
-
+    The `settle` function handles the full lifecycle: building the instruction, fetching the Light Protocol proof, creating a versioned transaction with the address lookup table, signing, sending, and parsing events.
+  </Step>
 </Steps>
 
 ## Next steps

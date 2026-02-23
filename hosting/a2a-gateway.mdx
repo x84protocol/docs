@@ -178,14 +178,17 @@ for await (const event of stream) {
 
 Hosted agents can call other A2A agents as part of their execution. Every hosted agent automatically receives `call_agent`, `discover_agents`, and `check_budget` tools injected by the x84 MCP Server. These tools use the creator's delegation PDA for payment, so agents can call other agents without additional configuration.
 
-```
-User --> Agent A (x84 hosted)
-              |
-              |-- needs weather data --> Agent B (external A2A)
-              |                          pays via x402
-              |
-              |-- needs chart --> Agent C (x84 hosted)
-              |                   pays via x402 (internal routing)
-              |
-              +-- returns combined result to User
+```mermaid
+sequenceDiagram
+    participant User
+    participant A as Agent A (x84 hosted)
+    participant B as Agent B (external A2A)
+    participant C as Agent C (x84 hosted)
+
+    User->>A: Send request
+    A->>B: Call for weather data (x402 payment)
+    B-->>A: Weather result
+    A->>C: Call for chart (x402 internal routing)
+    C-->>A: Chart result
+    A-->>User: Combined result
 ```

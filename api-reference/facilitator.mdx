@@ -1,0 +1,107 @@
+---
+title: "x402 Facilitator"
+description: "USDC payment verification and settlement on Solana via the x402 protocol"
+---
+
+The x84 Facilitator is a production x402 v2 payment facilitator that verifies and settles USDC payments on Solana. It implements the [Coinbase x402 protocol](https://github.com/coinbase/x402) with x84-specific extensions for atomic, attestation, and delegated settlement modes.
+
+## Base URL
+
+```
+https://facilitator.x84.ai
+```
+
+## How it works
+
+The facilitator sits between A2A clients and the Solana network. When a client wants to pay for an agent request:
+
+<Steps>
+  <Step title="Resource server returns 402">
+    The A2A gateway returns a `402 Payment Required` response with payment requirements (amount, token, recipient, facilitator address).
+  </Step>
+  <Step title="Client builds transaction">
+    The client constructs a Solana `VersionedTransaction` with an SPL Token `TransferChecked` instruction. The facilitator's public key is set as the fee payer.
+  </Step>
+  <Step title="Client signs and sends to facilitator">
+    The client partially signs the transaction (payer signature only) and sends it to `POST /settle` along with the payment requirements.
+  </Step>
+  <Step title="Facilitator verifies">
+    The facilitator deserializes the transaction, validates the SPL instructions, checks amounts and recipients, and confirms the fee payer matches.
+  </Step>
+  <Step title="Facilitator co-signs and submits">
+    The facilitator adds its signature (as fee payer) and submits the fully-signed transaction to Solana. It confirms the transaction on-chain and returns the signature.
+  </Step>
+</Steps>
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/supported` | Discover supported payment kinds, extensions, and signer keys |
+| `POST` | `/verify` | Verify a payment payload without settling |
+| `POST` | `/settle` | Verify, co-sign as fee payer, and submit to Solana |
+| `GET` | `/health` | Health check |
+
+## x84 extensions
+
+On top of standard x402 SVM exact payments, the facilitator supports three x84-specific settlement modes via the `extensions` field in the payment payload:
+
+| Extension | ID | Description |
+|-----------|-----|-------------|
+| **Atomic** | `x84-atomic` | Client submits transaction directly to Solana. Facilitator verifies the on-chain tx signature and receipt PDA. |
+| **Attestation** | `x84-attestation` | Similar to atomic, but uses an attestation receipt PDA instead of a CPI receipt. |
+| **Delegated** | `x84-delegated` | Uses a [Delegation PDA](/protocol/delegation) for budget-based spending. Supports both client-side (delegation PDA reference) and server-side (ed25519 signature with 60s timestamp window) modes. |
+
+## Supported assets
+
+Currently the facilitator supports:
+
+| Network | Asset | Token |
+|---------|-------|-------|
+| Solana Devnet (`solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1`) | `Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr` | USDC (devnet) |
+
+Query `GET /supported` for the current list of supported kinds, extensions, and signer keys.
+
+## Verification rules
+
+The `/verify` and `/settle` endpoints enforce these validation rules:
+
+1. **Deserialization** — Transaction must be a valid Solana `VersionedTransaction`
+2. **Allowed programs** — Only SPL Token, ComputeBudget, and Memo programs are permitted
+3. **Transfer instruction** — Must contain exactly one `TransferChecked` instruction
+4. **Amount match** — Transfer amount must match the payment requirements
+5. **Mint match** — Token mint must match the required asset
+6. **Destination match** — Transfer destination must match the `payTo` address
+7. **Fee payer** — Must be the facilitator's public key (from `/supported` signers)
+8. **Replay prevention** — Already-signed transactions are rejected
+
+## Idempotency
+
+The `/settle` endpoint is idempotent. If the same transaction is submitted twice, the second call returns the original settlement result (same transaction signature) without resubmitting.
+
+## v1 backward compatibility
+
+The `paymentPayload` field accepts both formats:
+
+- **v2 (recommended)** — Structured `PaymentPayload` object with `x402Version`, `accepted`, `payload`, and optional `extensions`
+- **v1 (legacy)** — Base64-encoded JSON string, automatically normalized to v2 internally
+
+## Integration example
+
+```typescript
+import { X84A2AClient } from "@x84/sdk";
+
+const client = new X84A2AClient({
+  wallet: myKeypair,
+  rpcUrl: "https://api.devnet.solana.com",
+  facilitatorUrl: "https://facilitator.x84.ai",
+});
+
+// The SDK handles the full x402 flow automatically:
+// 1. Sends request → gets 402 → builds tx → calls /settle → retries with proof
+const result = await client.sendMessage(agentUrl, {
+  message: { role: "user", parts: [{ type: "text", text: "Hello" }] },
+});
+```
+
+For manual integration without the SDK, see the endpoint reference below.

@@ -103,8 +103,15 @@
         "tab": "API Reference",
         "groups": [
           {
-            "group": "REST API",
-            "pages": ["api-reference/introduction"]
+            "group": "Overview",
+            "pages": ["api-reference/introduction", "api-reference/facilitator"]
+          },
+          {
+            "group": "x402 Facilitator",
+            "openapi": {
+              "source": "https://facilitator.x84.ai/openapi.yaml",
+              "directory": "api-reference/facilitator-api"
+            }
           }
         ]
       }

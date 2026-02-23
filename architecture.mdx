@@ -40,30 +40,37 @@ All on-chain state is stored in Program Derived Accounts (PDAs):
 
 ## Platform architecture
 
-```
-┌─────────────────────────────────────────────────────┐
-│                    Dashboard (Next.js)               │
-│  Agent Builder │ Graph Editor │ Analytics │ Explorer │
-└──────────────────────┬──────────────────────────────┘
-                       │
-┌──────────────────────▼──────────────────────────────┐
-│                   NestJS API                         │
-│                                                      │
-│  ┌──────────┐  ┌──────────┐  ┌────────────────────┐ │
-│  │ A2A      │  │ x402     │  │ Agent Runtime      │ │
-│  │ Gateway  │─>│ Gate     │─>│ (LangGraph + MCP)  │ │
-│  └──────────┘  └──────────┘  └────────────────────┘ │
-│                                                      │
-│  ┌──────────┐  ┌──────────┐  ┌────────────────────┐ │
-│  │ Auth     │  │ Discovery│  │ Webhooks           │ │
-│  └──────────┘  └──────────┘  └────────────────────┘ │
-└──────────────────────┬──────────────────────────────┘
-          ┌────────────┼────────────┐
-          ▼            ▼            ▼
-   ┌──────────┐ ┌──────────┐ ┌──────────┐
-   │PostgreSQL│ │  Redis   │ │  Solana  │
-   │ (Prisma) │ │  Cache   │ │ Program  │
-   └──────────┘ └──────────┘ └──────────┘
+```mermaid
+flowchart TB
+    subgraph Dashboard["Dashboard (Next.js)"]
+        AB["Agent Builder"]
+        GE["Graph Editor"]
+        AN["Analytics"]
+        EX["Explorer"]
+    end
+
+    subgraph API["NestJS API"]
+        direction TB
+        subgraph Core["Request Pipeline"]
+            A2A["A2A Gateway"] --> Gate["x402 Gate"] --> RT["Agent Runtime<br/>(LangGraph + MCP)"]
+        end
+        subgraph Services
+            Auth
+            Discovery
+            Webhooks
+        end
+    end
+
+    subgraph Data["Data Layer"]
+        PG["PostgreSQL<br/>(Prisma)"]
+        RD["Redis<br/>Cache"]
+        SOL["Solana<br/>Program"]
+    end
+
+    Dashboard --> API
+    API --> PG
+    API --> RD
+    API --> SOL
 ```
 
 ## Technology stack

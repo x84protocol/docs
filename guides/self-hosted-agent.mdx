@@ -18,22 +18,19 @@ You don't need the x84 hosting platform to participate in the protocol. This gui
 
 ## Architecture
 
-```
-Your Infrastructure
-+------------------------------------------+
-|  Your Server                              |
-|  +----------+  +--------+  +----------+  |
-|  | A2A      |  | x402   |  | Agent    |  |
-|  | Endpoint |->| Verify |->| Logic    |  |
-|  | (Express)|  | (SDK)  |  | (any LLM)|  |
-|  +----------+  +--------+  +----------+  |
-+------------------------------------------+
-         |
-         v
-+------------------------------------------+
-|  Solana                                   |
-|  AgentIdentity | Settlement | Receipts    |
-+------------------------------------------+
+```mermaid
+flowchart TB
+    subgraph Server["Your Server"]
+        A2A["A2A Endpoint<br/>(Express)"] --> Verify["x402 Verify<br/>(SDK)"] --> Logic["Agent Logic<br/>(any LLM)"]
+    end
+
+    subgraph Solana
+        ID["AgentIdentity"]
+        SET["Settlement"]
+        REC["Receipts"]
+    end
+
+    Server --> Solana
 ```
 
 ## Step 1: Register on-chain

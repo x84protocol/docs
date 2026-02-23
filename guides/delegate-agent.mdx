@@ -14,67 +14,63 @@ Delegations let you grant another wallet (or an agent) permission to act on beha
 ## Create a delegation
 
 <Steps>
+  <Step title="Define the delegation parameters">
+    Choose who to delegate to, how much they can spend, and what they can do.
 
-### Define the delegation parameters
+    ```typescript
+    import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+    import { AnchorProvider, Program, BN } from "@coral-xyz/anchor";
+    import {
+      createDelegation,
+      DelegationScope,
+      getNetworkConfig,
+    } from "@x84-ai/sdk";
 
-Choose who to delegate to, how much they can spend, and what they can do.
+    const connection = new Connection("https://api.devnet.solana.com");
+    const ownerKeypair = Keypair.fromSecretKey(/* your wallet secret key */);
+    const wallet = new NodeWallet(ownerKeypair);
+    const provider = new AnchorProvider(connection, wallet);
+    const program = new Program(idl, provider);
+    const config = getNetworkConfig("devnet");
 
-```typescript
-import { Connection, Keypair, PublicKey } from "@solana/web3.js";
-import { AnchorProvider, Program, BN } from "@coral-xyz/anchor";
-import {
-  createDelegation,
-  DelegationScope,
-  getNetworkConfig,
-} from "@x84-ai/sdk";
+    const delegateWallet = new PublicKey("DeLe...gAtE"); // the wallet receiving permissions
+    const agentMint = new PublicKey("AgEn...tMiNt"); // your agent's NFT mint
+    ```
+  </Step>
+  <Step title="Create the delegation">
+    ```typescript
+    const { instruction, delegationPda } = await createDelegation(program, {
+      delegator: ownerKeypair.publicKey,
+      delegate: delegateWallet,
+      nftMint: agentMint,
+      scope: DelegationScope.Payment,
+      maxSpendTotal: new BN(10_000_000), // 10 USDC total budget
+      maxSpendPerTx: new BN(1_000_000),  // 1 USDC max per transaction
+      tokenMint: config.tokenMint!,
+      expiry: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60, // 30 days
+      maxUses: 100, // max 100 transactions
+      depth: 0, // no sub-delegation
+    });
 
-const connection = new Connection("https://api.devnet.solana.com");
-const ownerKeypair = Keypair.fromSecretKey(/* your wallet secret key */);
-const wallet = new NodeWallet(ownerKeypair);
-const provider = new AnchorProvider(connection, wallet);
-const program = new Program(idl, provider);
-const config = getNetworkConfig("devnet");
+    // Sign and send the transaction
+    // Signers: [ownerKeypair]
+    ```
 
-const delegateWallet = new PublicKey("DeLe...gAtE"); // the wallet receiving permissions
-const agentMint = new PublicKey("AgEn...tMiNt"); // your agent's NFT mint
-```
+    <Tip>
+      Set `maxSpendPerTx` to limit individual transaction sizes. This prevents a compromised delegate from draining the entire budget in one call.
+    </Tip>
+  </Step>
+  <Step title="Verify the delegation">
+    ```typescript
+    import { fetchDelegation } from "@x84-ai/sdk";
 
-### Create the delegation
-
-```typescript
-const { instruction, delegationPda } = await createDelegation(program, {
-  delegator: ownerKeypair.publicKey,
-  delegate: delegateWallet,
-  nftMint: agentMint,
-  scope: DelegationScope.Payment,
-  maxSpendTotal: new BN(10_000_000), // 10 USDC total budget
-  maxSpendPerTx: new BN(1_000_000),  // 1 USDC max per transaction
-  tokenMint: config.tokenMint!,
-  expiry: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60, // 30 days
-  maxUses: 100, // max 100 transactions
-  depth: 0, // no sub-delegation
-});
-
-// Sign and send the transaction
-// Signers: [ownerKeypair]
-```
-
-<Tip>
-  Set `maxSpendPerTx` to limit individual transaction sizes. This prevents a compromised delegate from draining the entire budget in one call.
-</Tip>
-
-### Verify the delegation
-
-```typescript
-import { fetchDelegation } from "@x84-ai/sdk";
-
-const delegation = await fetchDelegation(program, delegationPda);
-console.log("Delegation PDA:", delegationPda.toBase58());
-console.log("Remaining budget:", delegation.remainingBudget.toString());
-console.log("Uses left:", delegation.remainingUses);
-console.log("Expires:", new Date(delegation.expiry * 1000));
-```
-
+    const delegation = await fetchDelegation(program, delegationPda);
+    console.log("Delegation PDA:", delegationPda.toBase58());
+    console.log("Remaining budget:", delegation.remainingBudget.toString());
+    console.log("Uses left:", delegation.remainingUses);
+    console.log("Expires:", new Date(delegation.expiry * 1000));
+    ```
+  </Step>
 </Steps>
 
 ## Delegation scopes
