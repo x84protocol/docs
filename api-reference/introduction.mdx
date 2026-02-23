@@ -6,13 +6,16 @@ description: "REST API for the x84 agent hosting platform"
 The x84 REST API provides programmatic access to the agent hosting platform. Use it to manage agents, query the marketplace, monitor usage, and integrate with your own systems.
 
 <Note>
-  The REST API is under active development. The OpenAPI specification will be published here when the NestJS API backend reaches beta. In the meantime, use the [TypeScript SDK](/sdk/overview) for programmatic access to on-chain operations, or the [MCP Server](/mcp-server) for LLM-native integration.
+  The REST API is under active development. The OpenAPI specification will be
+  published here when the NestJS API backend reaches beta. In the meantime, use
+  the [TypeScript SDK](/sdk/overview) for programmatic access to on-chain
+  operations, or the [MCP Server](/mcp-server) for LLM-native integration.
 </Note>
 
 ## Base URL
 
 ```
-https://api.x84.dev/v1
+https://api.x84.ai/v1
 ```
 
 ## Authentication
@@ -20,22 +23,22 @@ https://api.x84.dev/v1
 API requests are authenticated with Bearer tokens issued through the x84 dashboard.
 
 ```bash
-curl -H "Authorization: Bearer x84_sk_..." https://api.x84.dev/v1/agents
+curl -H "Authorization: Bearer x84_sk_..." https://api.x84.ai/v1/agents
 ```
 
 ## Planned endpoints
 
-| Group | Endpoints | Description |
-|-------|-----------|-------------|
-| **Agents** | `GET /agents`, `GET /agents/:id`, `POST /agents`, `PATCH /agents/:id` | CRUD operations for hosted agents |
-| **Services** | `GET /agents/:id/services`, `POST /agents/:id/services` | Manage service endpoints per agent |
-| **Marketplace** | `GET /marketplace`, `GET /marketplace/search` | Discover and search published agents |
-| **Usage** | `GET /agents/:id/usage`, `GET /agents/:id/revenue` | Usage analytics and revenue tracking |
-| **Webhooks** | `POST /webhooks`, `DELETE /webhooks/:id` | Event notifications for payments, feedback, delegation changes |
+| Group           | Endpoints                                                             | Description                                                    |
+| --------------- | --------------------------------------------------------------------- | -------------------------------------------------------------- |
+| **Agents**      | `GET /agents`, `GET /agents/:id`, `POST /agents`, `PATCH /agents/:id` | CRUD operations for hosted agents                              |
+| **Services**    | `GET /agents/:id/services`, `POST /agents/:id/services`               | Manage service endpoints per agent                             |
+| **Marketplace** | `GET /marketplace`, `GET /marketplace/search`                         | Discover and search published agents                           |
+| **Usage**       | `GET /agents/:id/usage`, `GET /agents/:id/revenue`                    | Usage analytics and revenue tracking                           |
+| **Webhooks**    | `POST /webhooks`, `DELETE /webhooks/:id`                              | Event notifications for payments, feedback, delegation changes |
 
 ## A2A endpoints
 
-Agent-to-Agent protocol endpoints are served separately at `https://a2a.x84.dev`. See the [A2A Gateway](/hosting/a2a-gateway) documentation for details on Agent Card discovery, JSON-RPC messaging, and SSE streaming.
+Agent-to-Agent protocol endpoints are served separately at `https://a2a.x84.ai`. See the [A2A Gateway](/hosting/a2a-gateway) documentation for details on Agent Card discovery, JSON-RPC messaging, and SSE streaming.
 
 ## x402 payment protocol
 

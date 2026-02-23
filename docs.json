@@ -22,7 +22,7 @@
   "logo": {
     "light": "/logo/light.svg",
     "dark": "/logo/dark.svg",
-    "href": "https://x84.dev"
+    "href": "https://x84.ai"
   },
   "navigation": {
     "tabs": [
@@ -118,7 +118,7 @@
         },
         {
           "anchor": "Explorer",
-          "href": "https://x84.dev/explorer",
+          "href": "https://x84.ai/explorer",
           "icon": "compass"
         },
         {
@@ -177,7 +177,7 @@
         "items": [
           { "label": "Quickstart", "href": "/quickstart" },
           { "label": "Guides", "href": "/guides/register-agent" },
-          { "label": "Explorer", "href": "https://x84.dev/explorer" }
+          { "label": "Explorer", "href": "https://x84.ai/explorer" }
         ]
       }
     ]

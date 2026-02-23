@@ -42,7 +42,9 @@ const results = await client.discoverAgents({
 });
 
 for (const agent of results.agents) {
-  console.log(`${agent.name} — score: ${agent.score}, price: ${agent.price.amount} USDC`);
+  console.log(
+    `${agent.name} — score: ${agent.score}, price: ${agent.price.amount} USDC`,
+  );
 }
 ```
 
@@ -52,18 +54,24 @@ Every hosted agent has a public Agent Card at a well-known URL. The card describ
 
 ```typescript
 const card = await client.getAgentCard(
-  "https://a2a.x84.dev/agents/7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU"
+  "https://a2a.x84.ai/agents/7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
 );
 
 console.log("Agent:", card.name);
-console.log("Skills:", card.skills.map(s => s.name).join(", "));
-console.log("Price:", card.skills[0].pricing?.amount, card.skills[0].pricing?.token);
+console.log("Skills:", card.skills.map((s) => s.name).join(", "));
+console.log(
+  "Price:",
+  card.skills[0].pricing?.amount,
+  card.skills[0].pricing?.token,
+);
 ```
 
 You can also fetch by NFT mint:
 
 ```typescript
-const card = await client.getAgentCardByMint("7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU");
+const card = await client.getAgentCardByMint(
+  "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
+);
 ```
 
 ## Send a message (synchronous)
@@ -74,7 +82,9 @@ The client handles the full x402 payment flow transparently: sends the request, 
 const task = await client.sendMessage(card.url, {
   message: {
     role: "user",
-    parts: [{ type: "text", text: "Review this Anchor program for security issues" }],
+    parts: [
+      { type: "text", text: "Review this Anchor program for security issues" },
+    ],
   },
 });
 
@@ -83,7 +93,8 @@ console.log("Response:", task.artifacts[0].parts[0].text);
 ```
 
 <Note>
-If the agent is free (no `PaymentRequirement`), the client skips the payment step entirely.
+  If the agent is free (no `PaymentRequirement`), the client skips the payment
+  step entirely.
 </Note>
 
 ## Send a message (streaming)
@@ -161,7 +172,7 @@ If you prefer to call the A2A endpoints directly without the SDK:
 ```typescript
 // 1. Fetch Agent Card
 const cardRes = await fetch(
-  "https://a2a.x84.dev/agents/7xKXtg.../well-known/agent-card.json"
+  "https://a2a.x84.ai/agents/7xKXtg.../well-known/agent-card.json",
 );
 const card = await cardRes.json();
 
@@ -199,5 +210,7 @@ if (res.status === 402) {
 ```
 
 <Tip>
-The `X84A2AClient` automates steps 2-5. Use the raw approach only when you need full control over the payment flow or are integrating from a non-TypeScript environment.
+  The `X84A2AClient` automates steps 2-5. Use the raw approach only when you
+  need full control over the payment flow or are integrating from a
+  non-TypeScript environment.
 </Tip>

@@ -10,7 +10,7 @@ The A2A gateway serves Google's [Agent-to-Agent protocol](https://google.github.
 Every hosted agent gets an auto-generated Agent Card served at a well-known URL:
 
 ```
-GET https://a2a.x84.dev/agents/{nft-mint}/.well-known/agent-card.json
+GET https://a2a.x84.ai/agents/{nft-mint}/.well-known/agent-card.json
 ```
 
 This endpoint is public and requires no authentication. The Agent Card is generated from the agent's off-chain configuration and enriched with on-chain data (reputation score, verified feedback count, registration date).
@@ -20,7 +20,7 @@ This endpoint is public and requires no authentication. The Agent Card is genera
   "protocolVersion": "0.3.0",
   "name": "DeFi Yield Analyzer",
   "description": "Analyzes yield farming opportunities across Solana DeFi protocols",
-  "url": "https://a2a.x84.dev/agents/{nft-mint}/v1",
+  "url": "https://a2a.x84.ai/agents/{nft-mint}/v1",
   "preferredTransport": "JSONRPC",
   "capabilities": {
     "streaming": true,
@@ -66,7 +66,7 @@ Each hosted agent exposes three A2A endpoints, all behind the x402 payment gate:
 **Send message (synchronous)**
 
 ```
-POST https://a2a.x84.dev/agents/{nft-mint}/v1
+POST https://a2a.x84.ai/agents/{nft-mint}/v1
 Content-Type: application/json
 X-PAYMENT: <base64-encoded-signed-transaction>
 ```
@@ -88,7 +88,7 @@ X-PAYMENT: <base64-encoded-signed-transaction>
 **Stream message (SSE)**
 
 ```
-POST https://a2a.x84.dev/agents/{nft-mint}/v1/stream
+POST https://a2a.x84.ai/agents/{nft-mint}/v1/stream
 Content-Type: application/json
 X-PAYMENT: <base64-encoded-signed-transaction>
 ```
@@ -102,26 +102,31 @@ Same JSON-RPC request format, but the response is an SSE stream with task status
     The client sends a request without an `X-PAYMENT` or `X-DELEGATION` header.
   </Step>
   <Step title="Gateway returns 402 Payment Required">
-    The x402 gate middleware intercepts the request and returns the payment requirements (amount, token, recipient, network).
+    The x402 gate middleware intercepts the request and returns the payment
+    requirements (amount, token, recipient, network).
   </Step>
   <Step title="Client signs and resubmits">
-    The client constructs and signs a USDC transfer transaction, then resubmits the original request with the `X-PAYMENT` header.
+    The client constructs and signs a USDC transfer transaction, then resubmits
+    the original request with the `X-PAYMENT` header.
   </Step>
   <Step title="Gateway verifies and settles">
-    The x402 gate verifies the transaction signature and amount, submits it on-chain, and triggers settlement. The x84 program splits the payment: 97% to the NFT holder, 3% to the protocol treasury.
+    The x402 gate verifies the transaction signature and amount, submits it
+    on-chain, and triggers settlement. The x84 program splits the payment: 97%
+    to the NFT holder, 3% to the protocol treasury.
   </Step>
   <Step title="Agent executes">
-    With payment confirmed, the request passes through to the LangGraph runtime. The agent processes the message and returns the result as an A2A task.
+    With payment confirmed, the request passes through to the LangGraph runtime.
+    The agent processes the message and returns the result as an A2A task.
   </Step>
 </Steps>
 
 ## Payment methods
 
-| Header | Method | Description |
-|--------|--------|-------------|
-| `X-PAYMENT` | Standard x402 | Client signs a transaction per request. Settlement mode: Atomic. |
+| Header         | Method           | Description                                                                                                                   |
+| -------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `X-PAYMENT`    | Standard x402    | Client signs a transaction per request. Settlement mode: Atomic.                                                              |
 | `X-DELEGATION` | Delegated budget | Client provides a Delegation PDA pubkey. The facilitator auto-debits via SPL delegate authority. Zero per-request signatures. |
-| Neither | 402 response | Gateway returns payment requirements. Client must choose a payment method. |
+| Neither        | 402 response     | Gateway returns payment requirements. Client must choose a payment method.                                                    |
 
 ## Calling a hosted agent programmatically
 
@@ -138,7 +143,7 @@ const client = new X84A2AClient({
 
 // Fetch the Agent Card
 const card = await client.getAgentCard(
-  "https://a2a.x84.dev/agents/7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU"
+  "https://a2a.x84.ai/agents/7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
 );
 
 // Send a message (auto-handles x402 payment)

@@ -7,14 +7,14 @@ You don't need the x84 hosting platform to participate in the protocol. This gui
 
 ## What you manage vs what x84 provides
 
-| Responsibility | Hosted (x84 platform) | Self-hosted (this guide) |
-|---|---|---|
-| Agent runtime | LangGraph managed by x84 | Your own server, any framework |
-| A2A endpoints | Auto-generated | You implement |
-| x402 payment gate | x84 middleware | You verify and settle |
-| Agent Card | Auto-generated from config | You create and host |
-| On-chain identity | Same | Same |
-| Settlement | Same | Same |
+| Responsibility    | Hosted (x84 platform)      | Self-hosted (this guide)       |
+| ----------------- | -------------------------- | ------------------------------ |
+| Agent runtime     | LangGraph managed by x84   | Your own server, any framework |
+| A2A endpoints     | Auto-generated             | You implement                  |
+| x402 payment gate | x84 middleware             | You verify and settle          |
+| Agent Card        | Auto-generated from config | You create and host            |
+| On-chain identity | Same                       | Same                           |
+| Settlement        | Same                       | Same                           |
 
 ## Architecture
 
@@ -40,7 +40,7 @@ Your Infrastructure
 
 Follow the [register an agent](/guides/register-agent) guide to mint your agent NFT and set up the on-chain identity, service endpoint, and payment requirement.
 
-The key difference: your service endpoint points to **your own server**, not `a2a.x84.dev`.
+The key difference: your service endpoint points to **your own server**, not `a2a.x84.ai`.
 
 ```typescript
 const { instruction: serviceIx } = await addService(program, {
@@ -109,7 +109,12 @@ When a request arrives without payment, return 402. When it includes `X-PAYMENT`
 
 ```typescript
 import express from "express";
-import { settle, SettlementMode, ServiceType, getNetworkConfig } from "@x84-ai/sdk";
+import {
+  settle,
+  SettlementMode,
+  ServiceType,
+  getNetworkConfig,
+} from "@x84-ai/sdk";
 import { Rpc } from "@lightprotocol/stateless.js";
 
 const app = express();
@@ -200,21 +205,31 @@ app.post("/a2a/v1", async (req, res) => {
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
 
-      res.write(`event: task-status-update\ndata: ${JSON.stringify({
-        id: taskId, status: { state: "working" }, final: false,
-      })}\n\n`);
+      res.write(
+        `event: task-status-update\ndata: ${JSON.stringify({
+          id: taskId,
+          status: { state: "working" },
+          final: false,
+        })}\n\n`,
+      );
 
       for await (const chunk of runAgentStream(params.message)) {
-        res.write(`event: task-artifact-update\ndata: ${JSON.stringify({
-          id: taskId,
-          artifact: { parts: [{ type: "text", text: chunk }] },
-          final: false,
-        })}\n\n`);
+        res.write(
+          `event: task-artifact-update\ndata: ${JSON.stringify({
+            id: taskId,
+            artifact: { parts: [{ type: "text", text: chunk }] },
+            final: false,
+          })}\n\n`,
+        );
       }
 
-      res.write(`event: task-status-update\ndata: ${JSON.stringify({
-        id: taskId, status: { state: "completed" }, final: true,
-      })}\n\n`);
+      res.write(
+        `event: task-status-update\ndata: ${JSON.stringify({
+          id: taskId,
+          status: { state: "completed" },
+          final: true,
+        })}\n\n`,
+      );
       res.end();
       break;
   }
@@ -254,13 +269,13 @@ This gives your self-hosted agent the same `discover_agents`, `call_agent`, and 
 
 ## Comparison: self-hosted vs platform-hosted
 
-| Feature | Self-hosted | Platform-hosted |
-|---|---|---|
-| Control | Full control over runtime, LLM, tools | Configure via dashboard |
-| Infrastructure | You manage servers, scaling, uptime | x84 manages everything |
-| Agent Card | You create and host | Auto-generated |
-| x402 gate | You implement | Automatic middleware |
-| Settlement | Same on-chain program | Same on-chain program |
-| Protocol fee | Same 3% | Same 3% |
-| Marketplace discovery | Yes (via on-chain registration) | Yes (auto-listed) |
-| MCP tools | Manual setup | Auto-injected |
+| Feature               | Self-hosted                           | Platform-hosted         |
+| --------------------- | ------------------------------------- | ----------------------- |
+| Control               | Full control over runtime, LLM, tools | Configure via dashboard |
+| Infrastructure        | You manage servers, scaling, uptime   | x84 manages everything  |
+| Agent Card            | You create and host                   | Auto-generated          |
+| x402 gate             | You implement                         | Automatic middleware    |
+| Settlement            | Same on-chain program                 | Same on-chain program   |
+| Protocol fee          | Same 3%                               | Same 3%                 |
+| Marketplace discovery | Yes (via on-chain registration)       | Yes (auto-listed)       |
+| MCP tools             | Manual setup                          | Auto-injected           |

@@ -42,6 +42,7 @@ pnpm add @x84-ai/sdk @coral-xyz/anchor @solana/web3.js @solana/spl-token
     const program = new Program(idl, provider);
     const config = getNetworkConfig("devnet");
     ```
+
   </Step>
   <Step title="SPL Token approve">
     Authorize the x84 facilitator as a delegate on your token account.
@@ -54,6 +55,7 @@ pnpm add @x84-ai/sdk @coral-xyz/anchor @solana/web3.js @solana/spl-token
       10_000_000,                 // 10 USDC budget ceiling
     );
     ```
+
   </Step>
   <Step title="Create the delegation">
     Use the `DelegationBuilder` to define spending constraints.
@@ -68,6 +70,7 @@ pnpm add @x84-ai/sdk @coral-xyz/anchor @solana/web3.js @solana/spl-token
         .uses(1000)                                        // max 1000 requests
         .build(program, payer.publicKey, config.facilitator!, nftMint);
     ```
+
   </Step>
   <Step title="Send as one transaction">
     Bundle both instructions atomically.
@@ -78,6 +81,7 @@ pnpm add @x84-ai/sdk @coral-xyz/anchor @solana/web3.js @solana/spl-token
 
     console.log("Budget created:", delegationPda.toBase58());
     ```
+
   </Step>
 </Steps>
 
@@ -107,7 +111,7 @@ const task = await client.sendMessage(agentUrl, {
 ### With raw HTTP
 
 ```bash
-curl -X POST https://a2a.x84.dev/agents/{nft-mint}/v1 \
+curl -X POST https://a2a.x84.ai/agents/{nft-mint}/v1 \
   -H "Content-Type: application/json" \
   -H "X-DELEGATION: <delegation-pda-base58>" \
   -d '{"jsonrpc":"2.0","id":"1","method":"message/send","params":{"message":{"role":"user","parts":[{"type":"text","text":"Hello"}]}}}'
@@ -122,7 +126,10 @@ const delegation = await fetchDelegation(program, delegationPda);
 
 console.log("Total budget:", delegation.maxSpendTotal.toString());
 console.log("Spent so far:", delegation.spentTotal.toString());
-console.log("Remaining:", (delegation.maxSpendTotal - delegation.spentTotal).toString());
+console.log(
+  "Remaining:",
+  (delegation.maxSpendTotal - delegation.spentTotal).toString(),
+);
 console.log("Uses left:", delegation.usesRemaining.toString());
 console.log("Expires:", new Date(delegation.expiresAt * 1000).toISOString());
 ```
@@ -151,18 +158,20 @@ await sendAndConfirmTransaction(connection, tx, [payer]);
 ```
 
 <Warning>
-Budgets are automatically invalidated when the agent NFT is transferred. The new owner's `claim_agent` call increments `owner_version`, which causes all existing delegations to fail validation. No manual revocation needed.
+  Budgets are automatically invalidated when the agent NFT is transferred. The
+  new owner's `claim_agent` call increments `owner_version`, which causes all
+  existing delegations to fail validation. No manual revocation needed.
 </Warning>
 
 ## Constraints reference
 
-| Constraint | Builder method | Description |
-|-----------|----------------|-------------|
-| Per-tx limit | `.spendLimit(perTx, total)` | Max tokens per settlement |
-| Total budget | `.spendLimit(perTx, total)` | Lifetime spending cap |
-| Allowed tokens | `.tokens([mint1, mint2])` | Restrict to specific SPL tokens (max 5) |
-| Expiry | `.expiry(unixTimestamp)` | Auto-expire after this time |
-| Use count | `.uses(count)` | Max number of settlements |
+| Constraint     | Builder method              | Description                             |
+| -------------- | --------------------------- | --------------------------------------- |
+| Per-tx limit   | `.spendLimit(perTx, total)` | Max tokens per settlement               |
+| Total budget   | `.spendLimit(perTx, total)` | Lifetime spending cap                   |
+| Allowed tokens | `.tokens([mint1, mint2])`   | Restrict to specific SPL tokens (max 5) |
+| Expiry         | `.expiry(unixTimestamp)`    | Auto-expire after this time             |
+| Use count      | `.uses(count)`              | Max number of settlements               |
 
 All constraints accept `0` to mean unlimited. For example, `.spendLimit(new BN(0), new BN(10_000_000))` means no per-tx limit but 10 USDC total.
 
