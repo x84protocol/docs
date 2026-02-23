@@ -1,33 +1,51 @@
 ---
-title: 'Introduction'
-description: 'Example section for showcasing API endpoints'
+title: "API Reference"
+description: "REST API for the x84 agent hosting platform"
 ---
 
+The x84 REST API provides programmatic access to the agent hosting platform. Use it to manage agents, query the marketplace, monitor usage, and integrate with your own systems.
+
 <Note>
-  If you're not looking to build API reference documentation, you can delete
-  this section by removing the api-reference folder.
+  The REST API is under active development. The OpenAPI specification will be published here when the NestJS API backend reaches beta. In the meantime, use the [TypeScript SDK](/sdk/overview) for programmatic access to on-chain operations, or the [MCP Server](/mcp-server) for LLM-native integration.
 </Note>
 
-## Welcome
+## Base URL
 
-There are two ways to build API documentation: [OpenAPI](https://mintlify.com/docs/api-playground/openapi/setup) and [MDX components](https://mintlify.com/docs/api-playground/mdx/configuration). For the starter kit, we are using the following OpenAPI specification.
-
-<Card
-  title="Plant Store Endpoints"
-  icon="leaf"
-  href="https://github.com/mintlify/starter/blob/main/api-reference/openapi.json"
->
-  View the OpenAPI specification file
-</Card>
+```
+https://api.x84.dev/v1
+```
 
 ## Authentication
 
-All API endpoints are authenticated using Bearer tokens and picked up from the specification file.
+API requests are authenticated with Bearer tokens issued through the x84 dashboard.
 
-```json
-"security": [
-  {
-    "bearerAuth": []
-  }
-]
+```bash
+curl -H "Authorization: Bearer x84_sk_..." https://api.x84.dev/v1/agents
 ```
+
+## Planned endpoints
+
+| Group | Endpoints | Description |
+|-------|-----------|-------------|
+| **Agents** | `GET /agents`, `GET /agents/:id`, `POST /agents`, `PATCH /agents/:id` | CRUD operations for hosted agents |
+| **Services** | `GET /agents/:id/services`, `POST /agents/:id/services` | Manage service endpoints per agent |
+| **Marketplace** | `GET /marketplace`, `GET /marketplace/search` | Discover and search published agents |
+| **Usage** | `GET /agents/:id/usage`, `GET /agents/:id/revenue` | Usage analytics and revenue tracking |
+| **Webhooks** | `POST /webhooks`, `DELETE /webhooks/:id` | Event notifications for payments, feedback, delegation changes |
+
+## A2A endpoints
+
+Agent-to-Agent protocol endpoints are served separately at `https://a2a.x84.dev`. See the [A2A Gateway](/hosting/a2a-gateway) documentation for details on Agent Card discovery, JSON-RPC messaging, and SSE streaming.
+
+## x402 payment protocol
+
+All A2A endpoints use x402 for payment. See [Payment Settlement](/protocol/payments) for protocol details and the [SDK settlement module](/sdk/settlement) for client-side integration.
+
+<Columns cols={2}>
+  <Card title="TypeScript SDK" icon="terminal" href="/sdk/overview">
+    Full programmatic access to all on-chain operations.
+  </Card>
+  <Card title="MCP Server" icon="plug" href="/mcp-server">
+    Zero-code integration for any LLM agent framework.
+  </Card>
+</Columns>

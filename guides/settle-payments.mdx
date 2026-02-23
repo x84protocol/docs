@@ -1,0 +1,211 @@
+---
+title: "Settle payments on-chain"
+description: "Verify and settle x402 payments using the SDK with compressed receipts"
+---
+
+This guide covers settling payments programmatically using the x84 SDK. Settlement verifies the payment, deducts the 3% protocol fee, transfers tokens, and creates a compressed receipt via Light Protocol.
+
+## Settlement modes
+
+x84 supports three modes. Choose based on your trust model:
+
+| Mode | Payer signs | Facilitator needed | Use case |
+|---|---|---|---|
+| **Atomic** | Yes | No | Direct user payments, payer is online |
+| **Attestation** | No | Yes | Fiat/off-chain payments, facilitator attests |
+| **Delegated** | No | Yes | Pre-approved budgets, agent-to-agent payments |
+
+## Prerequisites
+
+```bash
+pnpm add @x84-ai/sdk @lightprotocol/stateless.js @coral-xyz/anchor @solana/web3.js @solana/spl-token
+```
+
+<Tip>
+Settlement uses Light Protocol for compressed receipts. You need an RPC provider that supports ZK Compression: **Helius** (recommended) or **Triton**.
+</Tip>
+
+## Atomic settlement
+
+The payer signs the transaction. Tokens move on-chain via CPI.
+
+```typescript
+import { settle, SettlementMode, ServiceType, getNetworkConfig } from "@x84-ai/sdk";
+import { Rpc } from "@lightprotocol/stateless.js";
+import { BN } from "@coral-xyz/anchor";
+import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
+
+const config = getNetworkConfig("mainnet");
+const rpc = new Rpc(connection);
+
+const result = await settle({
+  program,
+  rpc,
+  connection,
+  nftMint: agentId,                              // agent being paid
+  serviceType: ServiceType.A2A,
+  amount: new BN(1_000_000),                     // 1 USDC
+  resource: "/v1/chat",                          // endpoint path
+  mode: SettlementMode.Atomic,
+  payer: payerPubkey,
+  payerTokenAccount: payerAta,
+  payeeTokenAccount: agentOwnerAta,
+  treasuryTokenAccount: config.treasuryTokenAccount!,
+  tokenMint: config.tokenMint!,
+  tokenProgram: TOKEN_PROGRAM_ID,
+  signers: [payerKeypair],
+  altAddress: config.lightAlt!,
+});
+
+console.log("TX:", result.txSignature);
+console.log("Fee:", result.paymentSettled?.feeAmount.toString());   // 30000 (0.03 USDC)
+console.log("Payee got:", result.paymentSettled?.payeeAmount?.toString()); // 970000 (0.97 USDC)
+```
+
+The `settle` function handles the full lifecycle: builds the instruction, fetches the Light Protocol validity proof, creates a `VersionedTransaction` with the address lookup table, signs, sends, confirms, and parses events.
+
+## Attestation settlement
+
+The facilitator attests that payment happened off-chain. No tokens move on-chain.
+
+```typescript
+const result = await settle({
+  program,
+  rpc,
+  connection,
+  nftMint: agentId,
+  serviceType: ServiceType.A2A,
+  amount: new BN(1_000_000),
+  resource: "/v1/chat",
+  mode: SettlementMode.Attestation,
+  payer: payerPubkey,          // the off-chain payer (for record-keeping)
+  payerTokenAccount: payerAta,
+  payeeTokenAccount: agentOwnerAta,
+  treasuryTokenAccount: config.treasuryTokenAccount!,
+  tokenMint: config.tokenMint!,
+  tokenProgram: TOKEN_PROGRAM_ID,
+  signers: [facilitatorKeypair], // must be the registered facilitator
+  altAddress: config.lightAlt!,
+});
+```
+
+<Warning>
+The signer must be the protocol's registered `facilitator` key stored in `ProtocolConfig`. Unauthorized callers get error code 6038 (`FacilitatorRequired`).
+</Warning>
+
+## Delegated settlement
+
+Uses a pre-approved budget. No per-request signature from the payer.
+
+```typescript
+const result = await settle({
+  program,
+  rpc,
+  connection,
+  nftMint: agentId,
+  serviceType: ServiceType.A2A,
+  amount: new BN(1_000_000),
+  resource: "/v1/chat",
+  mode: SettlementMode.Delegated,
+  payer: payerPubkey,
+  payerTokenAccount: payerAta,
+  payeeTokenAccount: agentOwnerAta,
+  treasuryTokenAccount: config.treasuryTokenAccount!,
+  tokenMint: config.tokenMint!,
+  tokenProgram: TOKEN_PROGRAM_ID,
+  signers: [facilitatorKeypair],
+  altAddress: config.lightAlt!,
+  delegationPda: delegationPda, // the pre-approved budget
+});
+```
+
+The program verifies all delegation constraints (active, owner_version, expiry, spend limits, allowed tokens, uses) before executing the transfer.
+
+## Low-level instruction builder
+
+When you need the raw instruction to combine with other instructions in a custom transaction:
+
+```typescript
+import { buildVerifyAndSettleIx } from "@x84-ai/sdk/settlement";
+
+const { computeBudgetIx, instruction, lightParams } =
+  await buildVerifyAndSettleIx({
+    program,
+    rpc,
+    nftMint: agentId,
+    serviceType: ServiceType.A2A,
+    paymentId: randomPaymentId(), // 32-byte unique nonce
+    txSignature: signatureBytes,
+    amount: new BN(1_000_000),
+    resource: "/v1/chat",
+    mode: SettlementMode.Atomic,
+    payer: payerPubkey,
+    payerTokenAccount: payerAta,
+    payeeTokenAccount: agentOwnerAta,
+    treasuryTokenAccount: config.treasuryTokenAccount!,
+    tokenMint: config.tokenMint!,
+    tokenProgram: TOKEN_PROGRAM_ID,
+  });
+
+// Add both instructions to your transaction
+// computeBudgetIx sets 500K CU limit for proof verification
+```
+
+<Warning>
+Settlement transactions require ~100-150K compute units for Light Protocol proof verification. Always include the `computeBudgetIx`. Removing it causes transactions to fail.
+</Warning>
+
+## Parse settlement events
+
+```typescript
+import { parseEventsFromTx, findEvent } from "@x84-ai/sdk";
+
+const events = await parseEventsFromTx(program, connection, txSignature);
+const settled = findEvent(events, "paymentSettled");
+
+console.log("Payment ID:", Buffer.from(settled.paymentId).toString("hex"));
+console.log("Payer:", settled.payer.toBase58());
+console.log("Payee:", settled.payee.toBase58());
+console.log("Amount:", settled.amount.toString());
+console.log("Fee:", settled.feeAmount.toString());
+console.log("Mode:", settled.settlementMode);
+```
+
+## Query receipts
+
+Receipts are compressed PDAs. Use a ZK Compression-compatible RPC to query them.
+
+```typescript
+import { Rpc } from "@lightprotocol/stateless.js";
+
+const rpc = new Rpc(connection);
+
+// By exact address (when payment_id is known)
+const account = await rpc.getCompressedAccount(bn(address.toBytes()));
+const receipt = coder.types.decode("CompressedPaymentReceipt", account.data.data);
+
+console.log("Payer:", receipt.payer.toBase58());
+console.log("Amount:", receipt.amount.toString());
+console.log("Fee:", receipt.feeAmount.toString());
+console.log("Created:", new Date(receipt.createdAt * 1000).toISOString());
+```
+
+## Fee structure
+
+Every settlement deducts a protocol fee before the payee receives payment.
+
+| Parameter | Value |
+|-----------|-------|
+| Default fee | 300 bps (3%) |
+| Maximum cap | 1000 bps (10%) |
+| Destination | Protocol treasury |
+| Adjustable by | Governance |
+
+```
+fee = amount * 300 / 10_000
+payee_receives = amount - fee
+
+Example: 1 USDC payment
+  fee = 1_000_000 * 300 / 10_000 = 30_000 (0.03 USDC)
+  payee = 1_000_000 - 30_000 = 970_000 (0.97 USDC)
+```

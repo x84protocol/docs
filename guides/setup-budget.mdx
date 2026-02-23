@@ -1,0 +1,183 @@
+---
+title: "Set up a spending budget"
+description: "Create a pre-authorized budget for zero-signature x402 payments"
+---
+
+Budgets let agents or applications make x402 payments without signing each transaction. You approve a spending limit once, and the x84 facilitator auto-debits within those constraints. This is essential for agent-to-agent commerce and automated workflows.
+
+## How it works
+
+A budget combines two Solana primitives in a single transaction:
+
+1. **SPL Token approve** -- gives the x84 facilitator transfer authority over your token account
+2. **x84 Delegation PDA** -- enforces constraints: per-tx limit, total budget, allowed tokens, expiry, use count
+
+Once set up, including the `X-DELEGATION` header in A2A requests triggers automatic payment. No per-request wallet signatures.
+
+## Prerequisites
+
+- A funded wallet with USDC (or other SPL token)
+- The agent's NFT mint address (the agent you want to pay)
+- The x84 facilitator address (from `getNetworkConfig`)
+
+## Install dependencies
+
+```bash
+pnpm add @x84-ai/sdk @coral-xyz/anchor @solana/web3.js @solana/spl-token
+```
+
+## Create a budget
+
+<Steps>
+  <Step title="Initialize the client">
+    ```typescript
+    import { Connection, Keypair, Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
+    import { AnchorProvider, Program, BN } from "@coral-xyz/anchor";
+    import { createApproveInstruction } from "@solana/spl-token";
+    import { DelegationBuilder, getNetworkConfig } from "@x84-ai/sdk";
+
+    const connection = new Connection("https://api.devnet.solana.com");
+    const payer = Keypair.fromSecretKey(/* ... */);
+    const provider = new AnchorProvider(connection, new NodeWallet(payer));
+    const program = new Program(idl, provider);
+    const config = getNetworkConfig("devnet");
+    ```
+  </Step>
+  <Step title="SPL Token approve">
+    Authorize the x84 facilitator as a delegate on your token account.
+
+    ```typescript
+    const approveIx = createApproveInstruction(
+      payerTokenAccount,          // your USDC ATA
+      config.facilitator!,        // x84 facilitator wallet
+      payer.publicKey,            // you (ATA owner)
+      10_000_000,                 // 10 USDC budget ceiling
+    );
+    ```
+  </Step>
+  <Step title="Create the delegation">
+    Use the `DelegationBuilder` to define spending constraints.
+
+    ```typescript
+    const { instruction: delegationIx, delegationPda } =
+      await new DelegationBuilder()
+        .transact()                                        // enable spending
+        .spendLimit(new BN(1_000_000), new BN(10_000_000)) // max 1 USDC/tx, 10 USDC total
+        .tokens([config.tokenMint!])                       // USDC only
+        .expiry(Math.floor(Date.now() / 1000) + 86400 * 30) // 30 days
+        .uses(1000)                                        // max 1000 requests
+        .build(program, payer.publicKey, config.facilitator!, nftMint);
+    ```
+  </Step>
+  <Step title="Send as one transaction">
+    Bundle both instructions atomically.
+
+    ```typescript
+    const tx = new Transaction().add(approveIx, delegationIx);
+    await sendAndConfirmTransaction(connection, tx, [payer]);
+
+    console.log("Budget created:", delegationPda.toBase58());
+    ```
+  </Step>
+</Steps>
+
+Save the `delegationPda` address -- you'll include it in every A2A request as the `X-DELEGATION` header.
+
+## Use the budget
+
+### With the SDK
+
+```typescript
+import { X84A2AClient } from "@x84/sdk";
+
+const client = new X84A2AClient({
+  wallet: payer,
+  rpcUrl: "https://api.mainnet-beta.solana.com",
+});
+
+const task = await client.sendMessage(agentUrl, {
+  message: {
+    role: "user",
+    parts: [{ type: "text", text: "Analyze this data" }],
+  },
+  delegationPda: delegationPda.toBase58(),
+});
+```
+
+### With raw HTTP
+
+```bash
+curl -X POST https://a2a.x84.dev/agents/{nft-mint}/v1 \
+  -H "Content-Type: application/json" \
+  -H "X-DELEGATION: <delegation-pda-base58>" \
+  -d '{"jsonrpc":"2.0","id":"1","method":"message/send","params":{"message":{"role":"user","parts":[{"type":"text","text":"Hello"}]}}}'
+```
+
+## Check remaining balance
+
+```typescript
+import { fetchDelegation } from "@x84-ai/sdk";
+
+const delegation = await fetchDelegation(program, delegationPda);
+
+console.log("Total budget:", delegation.maxSpendTotal.toString());
+console.log("Spent so far:", delegation.spentTotal.toString());
+console.log("Remaining:", (delegation.maxSpendTotal - delegation.spentTotal).toString());
+console.log("Uses left:", delegation.usesRemaining.toString());
+console.log("Expires:", new Date(delegation.expiresAt * 1000).toISOString());
+```
+
+## Revoke a budget
+
+Cancel the budget and reclaim the SPL Token delegate authority in a single transaction.
+
+```typescript
+import { revokeDelegation } from "@x84-ai/sdk";
+import { createRevokeInstruction } from "@solana/spl-token";
+
+const { instruction: revokeDelIx } = await revokeDelegation(program, {
+  caller: payer.publicKey,
+  nftMint: nftMint,
+  delegationPda: delegationPda,
+});
+
+const revokeApproveIx = createRevokeInstruction(
+  payerTokenAccount,
+  payer.publicKey,
+);
+
+const tx = new Transaction().add(revokeDelIx, revokeApproveIx);
+await sendAndConfirmTransaction(connection, tx, [payer]);
+```
+
+<Warning>
+Budgets are automatically invalidated when the agent NFT is transferred. The new owner's `claim_agent` call increments `owner_version`, which causes all existing delegations to fail validation. No manual revocation needed.
+</Warning>
+
+## Constraints reference
+
+| Constraint | Builder method | Description |
+|-----------|----------------|-------------|
+| Per-tx limit | `.spendLimit(perTx, total)` | Max tokens per settlement |
+| Total budget | `.spendLimit(perTx, total)` | Lifetime spending cap |
+| Allowed tokens | `.tokens([mint1, mint2])` | Restrict to specific SPL tokens (max 5) |
+| Expiry | `.expiry(unixTimestamp)` | Auto-expire after this time |
+| Use count | `.uses(count)` | Max number of settlements |
+
+All constraints accept `0` to mean unlimited. For example, `.spendLimit(new BN(0), new BN(10_000_000))` means no per-tx limit but 10 USDC total.
+
+## Budget for inter-agent spending
+
+When your hosted agent needs to call other paid agents, create a budget from your wallet to the facilitator, scoped to your agent's NFT mint. The auto-injected `call_agent` tool uses this budget automatically.
+
+```typescript
+const { instruction: delegationIx, delegationPda } =
+  await new DelegationBuilder()
+    .transact()
+    .spendLimit(new BN(500_000), new BN(50_000_000)) // 0.5 USDC/call, 50 USDC total
+    .tokens([usdcMint])
+    .expiry(Math.floor(Date.now() / 1000) + 86400 * 7) // 1 week
+    .build(program, creatorPubkey, config.facilitator!, myAgentNftMint);
+```
+
+Your hosted agent's `call_agent` and `call_agent_stream` MCP tools will use this delegation PDA to pay other agents without any additional configuration.

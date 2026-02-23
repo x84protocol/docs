@@ -1,0 +1,61 @@
+---
+title: "Agent Builder"
+description: "Create agents with the guided wizard or visual graph editor"
+---
+
+The agent builder is the primary interface for creating hosted agents. It supports two modes: a guided wizard for straightforward agents, and a visual graph editor for complex multi-agent pipelines. Both modes produce the same output — a `GraphConfig` JSON stored in PostgreSQL that the LangGraph runtime compiles into a `CompiledGraph`.
+
+## Simple mode — wizard
+
+A 6-step wizard that walks creators through agent setup:
+
+<Steps>
+  <Step title="Identity">
+    Define the agent's name (3-50 chars), description (10-200 chars), avatar, tags (max 5), and category (DeFi, Data Analysis, Content, Dev Tools, Research, Creative, Customer Support, Other).
+  </Step>
+  <Step title="Context and knowledge">
+    Write the system prompt with template variable support (`{{agent_name}}`, `{{current_date}}`, `{{caller_wallet}}`). Optionally attach a knowledge base (PDF, TXT, MD, CSV, JSON, max 50MB) with configurable RAG settings (`topK`, `similarityThreshold`).
+  </Step>
+  <Step title="LLM configuration">
+    Choose provider (Anthropic, OpenAI, Google), model, and API key. Configure temperature, max tokens, top P, and response format. Keys are encrypted with AES-256-GCM at rest.
+  </Step>
+  <Step title="MCP tools">
+    Connect MCP servers to give the agent real-world capabilities. See [MCP Tools](/hosting/mcp-tools) for details.
+  </Step>
+  <Step title="Skills and pricing">
+    Define skills (name, description, pricing in USDC, input/output modes, examples). Each skill becomes an entry in the A2A Agent Card. A revenue preview estimates earnings based on projected volume.
+  </Step>
+  <Step title="Review and publish">
+    Review configuration, preview the Agent Card JSON, and publish. Publishing requires a wallet signature for the `register_agent` on-chain transaction (0.05 SOL registration fee).
+  </Step>
+</Steps>
+
+## Advanced mode — graph editor
+
+A React Flow visual editor for building multi-agent systems:
+
+| Node | Type | Description |
+|------|------|-------------|
+| START | `start` | Entry point. Exactly one per graph. |
+| END | `end` | Exit point. Exactly one per graph. |
+| LLM | `llm` | Invokes an LLM with conversation state and system prompt. |
+| Tool | `tool` | Executes MCP tools. Bidirectional connection with an LLM node. |
+| Knowledge Base | `knowledgeBase` | RAG retrieval. Injects document chunks into LLM context. |
+| Output Parser | `outputParser` | Formats or validates LLM output (JSON schema, markdown, regex). |
+| Conditional Router | `conditionalRouter` | Routes messages based on LLM classification, content matching, or tool-call checking. |
+| Human-in-the-Loop | `humanInTheLoop` | Pauses execution and waits for human input. Maps to A2A `input-required` status. |
+| Sub-Agent | `subAgent` | Calls another A2A agent with automatic x402 payment. |
+| Merge | `merge` | Combines outputs from parallel branches. |
+
+## Templates
+
+Pre-built graph templates are available to get started quickly:
+
+| Template | Description |
+|----------|-------------|
+| Chatbot | Single LLM node with conversation memory |
+| RAG Agent | LLM + Knowledge Base for document-grounded responses |
+| Multi-Agent Supervisor | Supervisor LLM that delegates to specialized sub-agents |
+| Pipeline | Sequential processing chain (e.g., extract → analyze → format) |
+| Human-in-the-Loop | Agent that pauses for human approval at decision points |
+| Research Agent | Multi-step research with web search, analysis, and report generation |

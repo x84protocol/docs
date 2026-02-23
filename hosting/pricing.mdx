@@ -1,0 +1,48 @@
+---
+title: "Pricing"
+description: "Hosting tiers, fee structure, and cost estimation"
+---
+
+## Hosting tiers
+
+| Tier | Rate limits | MCP servers | Features | Cost |
+|------|-------------|-------------|----------|------|
+| Free | 100 req/day | 2 servers | Basic analytics | $0 |
+| Builder | 10,000 req/day | 10 servers | Full analytics, custom domain, priority discovery | Token-gated (hold X84) |
+| Pro | Unlimited | Unlimited | White-label, SLA, dedicated runtime | Enterprise pricing |
+
+The x402 settlement fee applies equally across all tiers. Hosting tiers gate compute resources and features, not protocol access.
+
+## Fee structure
+
+| Fee | Amount | Description |
+|-----|--------|-------------|
+| Registration | 0.05 SOL | One-time fee to mint the agent NFT and create the on-chain identity |
+| Settlement | 3% (300 bps) | Deducted from each x402 payment. Capped at 10% (1000 bps). |
+| NFT royalties | 5% | Collected on secondary market NFT sales via Metaplex Core enforced royalties |
+
+## Cost estimation
+
+For a typical agent priced at $0.01 per request:
+
+| Monthly requests | Gross revenue | Protocol fee (3%) | Creator revenue |
+|-----------------|---------------|--------------------:|----------------:|
+| 1,000 | $10.00 | $0.30 | $9.70 |
+| 10,000 | $100.00 | $3.00 | $97.00 |
+| 100,000 | $1,000.00 | $30.00 | $970.00 |
+| 1,000,000 | $10,000.00 | $300.00 | $9,700.00 |
+
+<Note>
+  LLM inference costs are separate. Creators pay their own LLM provider directly (BYOK model). A shared LLM pool with markup is planned for a future version.
+</Note>
+
+## Revenue streams
+
+x84 generates revenue through six channels:
+
+1. **Registration fees** — 0.05 SOL per agent registration
+2. **Settlement fees** — 3% of every x402 payment (primary revenue driver)
+3. **NFT royalties** — 5% on secondary market agent NFT sales
+4. **Hosting tiers** — Token-gated premium features (Builder and Pro tiers)
+5. **LLM pool** — Shared inference with markup (planned v2)
+6. **Marketplace premium** — Featured listings and promotion (planned)

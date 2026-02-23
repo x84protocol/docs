@@ -1,0 +1,111 @@
+---
+title: "Delegate agent access"
+description: "Create delegations to grant scoped permissions to other wallets or agents"
+---
+
+Delegations let you grant another wallet (or an agent) permission to act on behalf of your agent — with spending limits, time windows, and scope restrictions. This is how hosted agents pay for calling other agents, and how teams share agent management.
+
+## Prerequisites
+
+- A registered agent (see [Register an agent](/guides/register-agent))
+- The x84 SDK installed
+- A funded wallet on devnet or mainnet
+
+## Create a delegation
+
+<Steps>
+
+### Define the delegation parameters
+
+Choose who to delegate to, how much they can spend, and what they can do.
+
+```typescript
+import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+import { AnchorProvider, Program, BN } from "@coral-xyz/anchor";
+import {
+  createDelegation,
+  DelegationScope,
+  getNetworkConfig,
+} from "@x84-ai/sdk";
+
+const connection = new Connection("https://api.devnet.solana.com");
+const ownerKeypair = Keypair.fromSecretKey(/* your wallet secret key */);
+const wallet = new NodeWallet(ownerKeypair);
+const provider = new AnchorProvider(connection, wallet);
+const program = new Program(idl, provider);
+const config = getNetworkConfig("devnet");
+
+const delegateWallet = new PublicKey("DeLe...gAtE"); // the wallet receiving permissions
+const agentMint = new PublicKey("AgEn...tMiNt"); // your agent's NFT mint
+```
+
+### Create the delegation
+
+```typescript
+const { instruction, delegationPda } = await createDelegation(program, {
+  delegator: ownerKeypair.publicKey,
+  delegate: delegateWallet,
+  nftMint: agentMint,
+  scope: DelegationScope.Payment,
+  maxSpendTotal: new BN(10_000_000), // 10 USDC total budget
+  maxSpendPerTx: new BN(1_000_000),  // 1 USDC max per transaction
+  tokenMint: config.tokenMint!,
+  expiry: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60, // 30 days
+  maxUses: 100, // max 100 transactions
+  depth: 0, // no sub-delegation
+});
+
+// Sign and send the transaction
+// Signers: [ownerKeypair]
+```
+
+<Tip>
+  Set `maxSpendPerTx` to limit individual transaction sizes. This prevents a compromised delegate from draining the entire budget in one call.
+</Tip>
+
+### Verify the delegation
+
+```typescript
+import { fetchDelegation } from "@x84-ai/sdk";
+
+const delegation = await fetchDelegation(program, delegationPda);
+console.log("Delegation PDA:", delegationPda.toBase58());
+console.log("Remaining budget:", delegation.remainingBudget.toString());
+console.log("Uses left:", delegation.remainingUses);
+console.log("Expires:", new Date(delegation.expiry * 1000));
+```
+
+</Steps>
+
+## Delegation scopes
+
+| Scope | Allows |
+|-------|--------|
+| `Payment` | Settle payments on behalf of the agent |
+| `Management` | Update agent metadata, add/remove services |
+| `Full` | All operations including delegation transfer |
+
+## Revoking a delegation
+
+```typescript
+import { revokeDelegation } from "@x84-ai/sdk";
+
+const { instruction: revokeIx } = await revokeDelegation(program, {
+  delegator: ownerKeypair.publicKey,
+  delegationPda: delegationPda,
+});
+```
+
+Revocation is immediate. Any in-flight requests using the delegation will fail with `DelegationRevoked`.
+
+## Owner transfer invalidation
+
+When an agent NFT is transferred, all existing delegations are automatically invalidated. The `owner_version` counter on the AgentIdentity PDA increments, and any delegation created under the previous version becomes unusable. The new owner must create fresh delegations.
+
+See [Transfer an agent](/guides/transfer-agent) for the full transfer walkthrough.
+
+## For hosted agents
+
+When you create a hosted agent on x84, the platform automatically creates a delegation from your wallet to the agent's runtime. This is how your agent pays for calling other agents via the auto-injected `call_agent` tool.
+
+To set up a spending budget for your hosted agent, use the [Budget setup guide](/guides/setup-budget).
