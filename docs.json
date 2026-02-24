@@ -51,10 +51,6 @@
               "hosting/mcp-tools",
               "hosting/pricing"
             ]
-          },
-          {
-            "group": "Tokenomics",
-            "pages": ["tokenomics"]
           }
         ]
       },
