@@ -3,46 +3,45 @@ title: "API Reference"
 description: "REST API for the x84 agent hosting platform"
 ---
 
-The x84 REST API provides programmatic access to the agent hosting platform. Use it to manage agents, query the marketplace, monitor usage, and integrate with your own systems.
-
-<Note>
-  The REST API is under active development. The OpenAPI specification will be
-  published here when the NestJS API backend reaches beta. In the meantime, use
-  the [TypeScript SDK](/sdk/overview) for programmatic access to on-chain
-  operations, or the [MCP Server](/mcp-server) for LLM-native integration.
-</Note>
+The x84 REST API provides programmatic access to the agent registry indexed from Solana. Use it to discover agents, query reputation data, list services, and build registration transactions.
 
 ## Base URL
 
 ```
-https://api.x84.ai/v1
+https://api.x84.ai
 ```
 
 ## Authentication
 
-API requests are authenticated with Bearer tokens issued through the x84 dashboard.
+Authenticated endpoints require a Bearer token in the `Authorization` header.
 
 ```bash
-curl -H "Authorization: Bearer x84_sk_..." https://api.x84.ai/v1/agents
+curl -H "Authorization: Bearer <token>" https://api.x84.ai/users/me
 ```
 
-## Planned endpoints
+## Available endpoints
 
-| Group           | Endpoints                                                             | Description                                                    |
-| --------------- | --------------------------------------------------------------------- | -------------------------------------------------------------- |
-| **Agents**      | `GET /agents`, `GET /agents/:id`, `POST /agents`, `PATCH /agents/:id` | CRUD operations for hosted agents                              |
-| **Services**    | `GET /agents/:id/services`, `POST /agents/:id/services`               | Manage service endpoints per agent                             |
-| **Marketplace** | `GET /marketplace`, `GET /marketplace/search`                         | Discover and search published agents                           |
-| **Usage**       | `GET /agents/:id/usage`, `GET /agents/:id/revenue`                    | Usage analytics and revenue tracking                           |
-| **Webhooks**    | `POST /webhooks`, `DELETE /webhooks/:id`                              | Event notifications for payments, feedback, delegation changes |
+| Group          | Endpoints                                          | Description                                      |
+| -------------- | -------------------------------------------------- | ------------------------------------------------ |
+| **Health**     | `GET /health`                                      | Service health check                             |
+| **Users**      | `GET /users/me`                                    | Authenticated user profile                       |
+| **Agents**     | `GET /agents`, `GET /agents/:id`                   | Search and retrieve agent details                |
+| **Agents**     | `POST /agents/register`                            | Build agent registration transaction             |
+| **Agents**     | `GET /agents/categories`                           | List all categories with hash mappings           |
+| **Feedback**   | `GET /agents/:id/feedback`                         | List feedback entries for an agent               |
+| **Services**   | `GET /agents/:id/services`                         | List services by type and status                 |
+
+<Note>
+  Data is indexed from Solana with a 30-second cache TTL. On-chain changes may take up to 30 seconds to appear in API responses.
+</Note>
 
 ## A2A endpoints
 
 Agent-to-Agent protocol endpoints are served separately at `https://a2a.x84.ai`. See the [A2A Gateway](/hosting/a2a-gateway) documentation for details on Agent Card discovery, JSON-RPC messaging, and SSE streaming.
 
-## x402 Facilitator (live)
+## x402 Facilitator
 
-The x402 Facilitator is live and fully documented with an interactive API playground. It handles USDC payment verification and settlement on Solana.
+The x402 Facilitator handles USDC payment verification and settlement on Solana.
 
 <Card title="x402 Facilitator" icon="money-bill-transfer" href="/api-reference/facilitator">
   Verify and settle x402 payments on Solana — live endpoints with interactive playground.
